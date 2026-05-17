@@ -1,5 +1,6 @@
 import {
   ActionType,
+  Channel,
   Classification,
   Customer,
   Decision,
@@ -26,11 +27,22 @@ import {
   saveDecision as supermemorySaveDecision,
   toMockExternalAction as supermemoryAction,
 } from "../integrations/supermemory";
-import { demoBusiness } from "../business";
+import { businessSignature, demoBusiness } from "../business";
 
 export interface ProcessOptions {
   useLLM?: boolean;
   managerName?: string;
+}
+
+function stripSignature(text: string): string {
+  return text
+    .replace(/\n\s*(best|thanks|thank you|warmly|sincerely),?\s*\n[\s\S]*$/i, "")
+    .trim();
+}
+
+function signedCustomerResponse(text: string, channel: Channel): string {
+  const sigChannel = channel === "form" ? "email" : channel;
+  return `${stripSignature(text)}\n\n${businessSignature(sigChannel)}`;
 }
 
 interface DecisionPlan {
@@ -96,11 +108,13 @@ export async function processInboundMessage(
     }
   }
 
+  const signed_response = signedCustomerResponse(customer_response, message.channel);
+
   const externalActions = await runExternalActions({
     plan,
     message,
     customer,
-    customer_response,
+    customer_response: signed_response,
     owner_summary,
     detected_amount: hints.detected_amount,
   });
@@ -110,7 +124,7 @@ export async function processInboundMessage(
     reasoning_summary,
     decision: plan.decision,
     policy_applied: plan.policy_applied,
-    customer_response,
+    customer_response: signed_response,
     owner_summary,
     action_type: plan.action_type,
     mock_external_actions: externalActions,

@@ -13,7 +13,7 @@ export interface BusinessProfile {
 
 export const demoBusiness: BusinessProfile = {
   name: "Opelo Demo Studio",
-  ownerName: "the owner",
+  ownerName: process.env.BUSINESS_OWNER_NAME || "Raina",
   managerName: "Opelo",
   phone: process.env.OWNER_PHONE_NUMBER || "+15555550123",
   offerings: [
@@ -22,5 +22,18 @@ export const demoBusiness: BusinessProfile = {
     { name: "AI Workflow Implementation", priceCents: 800000 },
   ],
 };
+
+export function businessSignature(
+  channel: "email" | "sms" | "social_dm" | "phone_transcript",
+) {
+  const name = process.env.BUSINESS_OWNER_NAME || demoBusiness.ownerName;
+  const title = process.env.BUSINESS_OWNER_TITLE || "Founder";
+
+  if (channel === "email") {
+    return `Best,\n${name}\n${title}`;
+  }
+
+  return `— ${name}, ${title}`;
+}
 
 export const DEFAULT_MANAGER_NAME = "Opelo";

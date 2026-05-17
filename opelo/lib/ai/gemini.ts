@@ -119,7 +119,7 @@ Return ONLY a JSON object matching this exact schema:
   "reasoning_summary": "one short business sentence, no chain-of-thought",
   "decision": "approve|reject|negotiate|schedule|escalate_to_owner",
   "policy_applied": "short policy label that justified the decision",
-  "customer_response": "2-4 short sentences, warm + professional, signed from the owner (not the AI)",
+  "customer_response": "2-4 short sentences, warm + professional. Do not include a signoff or signature — one will be appended automatically.",
   "owner_summary": "one sentence the owner can read at a glance",
   "action_type": "refund_issued|discount_offered|sponsorship_declined|sponsorship_countered|meeting_booked|owner_escalated|lead_nurtured|auto_reply_sent",
   "suggested_external_actions": ["sponge.refund.created", "agentmail.reply", "agentphone.sms.owner_update"]
