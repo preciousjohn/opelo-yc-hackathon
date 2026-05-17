@@ -13,6 +13,7 @@ import {
   StatusPill,
 } from "@/components/Badges";
 import { demoBusiness } from "@/lib/business";
+import { IntegrationsStatus } from "@/components/IntegrationsStatus";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,8 @@ export default async function DashboardPage() {
       </div>
 
       <OwnerSummaryCard stats={stats} actions={actions} customers={customers} />
+
+      <IntegrationsStatus />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
