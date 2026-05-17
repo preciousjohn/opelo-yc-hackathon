@@ -35,6 +35,22 @@ export interface SendSMSInput {
   live?: boolean;
   /** Upstream AgentPhone message id, used for threading if supported. */
   source_id?: string;
+  /** Override the agent id (defaults to AGENTPHONE_AGENT_ID env). */
+  agentId?: string;
+  /** Reply in-thread when we know the conversation. */
+  conversationId?: string;
+  /** Reserved for future routing. */
+  numberId?: string;
+  /** Upstream sub-channel ("sms" / "imessage") — surfaces in mock detail. */
+  channel?: "sms" | "imessage";
+}
+
+interface AttemptedEndpoint {
+  url: string;
+  method: "POST";
+  status: number | null;
+  body_preview?: string;
+  error?: string;
 }
 
 interface SendOutcome {
@@ -43,6 +59,8 @@ interface SendOutcome {
   ref: string;
   detail: string;
   mode: "mock" | "live";
+  attempted_endpoints?: AttemptedEndpoint[];
+  hint?: string;
 }
 
 function inMockMode(): boolean {
@@ -101,23 +119,33 @@ function normalizePhone(value: string): string {
   return cleaned;
 }
 
-async function callAgentPhone(input: {
-  to: string;
-  body: string;
-  source_id?: string;
-}): Promise<SendOutcome> {
+function forceMockSendEnabled(): boolean {
+  const v = process.env.AGENTPHONE_FORCE_MOCK_SEND?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
+function agentIdFromEnvOr(override?: string): string | undefined {
+  return override?.trim() || process.env.AGENTPHONE_AGENT_ID?.trim() || undefined;
+}
+
+function numberIdFromEnvOr(override?: string): string | undefined {
+  return (
+    override?.trim() || process.env.AGENTPHONE_NUMBER_ID?.trim() || undefined
+  );
+}
+
+interface EndpointAttempt {
+  url: string;
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Try the AgentPhone outbound endpoints in order. Returns on first success.
+ * If all fail, returns a SendOutcome with attempted_endpoints + hint so the
+ * cockpit can surface exactly which URLs were tried and what they returned.
+ */
+async function callAgentPhone(input: SendSMSInput): Promise<SendOutcome> {
   const key = process.env.AGENTPHONE_API_KEY!;
-  const from = fromNumber();
-  if (!from) {
-    return {
-      ok: false,
-      action: "agentphone.sms.failed",
-      ref: nanoid("ap"),
-      detail:
-        "AGENTPHONE_API_KEY is set but AGENTPHONE_NUMBER is missing — cannot send.",
-      mode: "live",
-    };
-  }
   const to = normalizePhone(input.to);
   if (!looksLikePhone(to)) {
     return {
@@ -128,78 +156,141 @@ async function callAgentPhone(input: {
       mode: "live",
     };
   }
-
-  // AgentPhone tenants vary in path. Default to `/sms/send` but allow an
-  // override via `AGENTPHONE_SEND_PATH` (e.g. `/messages`, `/v1/sms`,
-  // `/agents/{agent_id}/messages`) without code changes. Path may be absolute
-  // or relative to the configured base URL.
-  const path = process.env.AGENTPHONE_SEND_PATH?.trim() || "/sms/send";
-  const url = path.startsWith("http")
-    ? path
-    : `${baseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
-  const payload: Record<string, unknown> = {
-    from,
-    to,
-    body: input.body,
-  };
-  if (input.source_id) payload.in_reply_to = input.source_id;
-
-  try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-    const bodyText = await resp.text().catch(() => "");
-    if (!resp.ok) {
-      return {
-        ok: false,
-        action: "agentphone.sms.failed",
-        ref: nanoid("ap"),
-        detail: `AgentPhone ${resp.status} ${resp.statusText} at ${url} — ${bodyText.slice(0, 240)}`,
-        mode: "live",
-      };
-    }
-    let parsedId: string | undefined;
-    try {
-      const json = JSON.parse(bodyText);
-      parsedId = json?.id ?? json?.message_id ?? json?.data?.id;
-    } catch {
-      // ignore
-    }
+  const agentId = agentIdFromEnvOr(input.agentId);
+  if (!agentId) {
+    // Per spec: don't hard-fail when the agent id is unknown; mock the send
+    // with a warning so the demo timeline still completes cleanly.
     return {
       ok: true,
-      action: "agentphone.sms.sent",
-      ref: parsedId ?? nanoid("ap"),
-      detail: `Sent SMS to ${to}: ${preview(input.body)}`,
-      mode: "live",
-    };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "unknown error";
-    return {
-      ok: false,
-      action: "agentphone.sms.failed",
+      action: "agentphone.mock.sms.sent",
       ref: nanoid("ap"),
-      detail: `AgentPhone network error: ${msg}`,
-      mode: "live",
+      detail: `Missing AGENTPHONE_AGENT_ID; simulated AgentPhone send to ${to}: ${preview(input.body)}`,
+      mode: "mock",
+      hint: "Set AGENTPHONE_AGENT_ID (or pass agentId via inbound metadata) to make this a real send.",
     };
   }
+
+  // number_id is REQUIRED for shared-imessage agents — without it, AgentPhone
+  // 404s with "No active number found for this agent" even though one is
+  // active. Confirmed against the OpenAPI schema for POST /v1/messages.
+  const numberId = numberIdFromEnvOr(input.numberId);
+
+  const base = baseUrl();
+  const attempts: EndpointAttempt[] = [];
+
+  const primaryPayload: Record<string, unknown> = {
+    agent_id: agentId,
+    to_number: to,
+    body: input.body,
+  };
+  if (numberId) primaryPayload.number_id = numberId;
+
+  // 1) Primary — POST /messages with number_id when known.
+  attempts.push({ url: `${base}/messages`, payload: primaryPayload });
+
+  // 2) Fallback — POST /messages/send (same body shape)
+  attempts.push({ url: `${base}/messages/send`, payload: primaryPayload });
+
+  // 3) Fallback — POST /conversations/{conversationId}/messages
+  if (input.conversationId) {
+    attempts.push({
+      url: `${base}/conversations/${encodeURIComponent(input.conversationId)}/messages`,
+      payload: { body: input.body },
+    });
+  }
+
+  // Optional: explicit override via env. Tried first when set.
+  const overridePath = process.env.AGENTPHONE_SEND_PATH?.trim();
+  if (overridePath) {
+    const overrideUrl = overridePath.startsWith("http")
+      ? overridePath
+      : `${base}${overridePath.startsWith("/") ? overridePath : `/${overridePath}`}`;
+    attempts.unshift({ url: overrideUrl, payload: primaryPayload });
+  }
+
+  const attempted: AttemptedEndpoint[] = [];
+  let lastError: string | undefined;
+
+  for (const a of attempts) {
+    try {
+      const resp = await fetch(a.url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(a.payload),
+      });
+      const bodyText = await resp.text().catch(() => "");
+      attempted.push({
+        url: a.url,
+        method: "POST",
+        status: resp.status,
+        body_preview: bodyText.slice(0, 240) || undefined,
+      });
+      if (resp.ok) {
+        let parsedId: string | undefined;
+        try {
+          const json = JSON.parse(bodyText);
+          parsedId =
+            json?.id ??
+            json?.message_id ??
+            json?.data?.id ??
+            json?.data?.message_id;
+        } catch {
+          // ignore
+        }
+        return {
+          ok: true,
+          action: "agentphone.sms.sent",
+          ref: parsedId ?? nanoid("ap"),
+          detail: `Sent via AgentPhone to ${to}: ${preview(input.body)} (POST ${a.url})`,
+          mode: "live",
+          attempted_endpoints: attempted,
+        };
+      }
+      lastError = `${resp.status} ${resp.statusText}`;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "network_error";
+      attempted.push({
+        url: a.url,
+        method: "POST",
+        status: null,
+        error: msg,
+      });
+      lastError = msg;
+    }
+  }
+
+  return {
+    ok: false,
+    action: "agentphone.sms.failed",
+    ref: nanoid("ap"),
+    detail: `All AgentPhone send endpoints failed (last: ${lastError ?? "unknown"}). Tried ${attempted.length} URL${attempted.length === 1 ? "" : "s"}.`,
+    mode: "live",
+    attempted_endpoints: attempted,
+    hint: "Check AgentPhone messages endpoint and AGENTPHONE_AGENT_ID. Set AGENTPHONE_FORCE_MOCK_SEND=true to mock during a demo.",
+  };
 }
 
 export async function sendSMS(
   input: SendSMSInput,
 ): Promise<MockExternalAction> {
   const hasKey = !inMockMode();
-  // Mock unless: real key is set AND caller marked this as a live recipient.
-  if (!hasKey || !input.live) {
+  const forceMock = forceMockSendEnabled();
+
+  // Mock when: no key, or caller didn't mark as live, or FORCE_MOCK_SEND.
+  if (!hasKey || !input.live || forceMock) {
+    const why = !hasKey
+      ? "no AGENTPHONE_API_KEY"
+      : forceMock
+        ? "AGENTPHONE_FORCE_MOCK_SEND=true"
+        : "seeded customer";
     return {
       name: "agentphone.mock.sms.sent",
       ok: true,
       ref: nanoid("ap"),
-      detail: `Sent SMS to ${input.to}: ${preview(input.body)} (demo${hasKey ? " — seeded customer" : ""}).`,
+      detail: `Sent SMS to ${input.to}: ${preview(input.body)} (demo — ${why}).`,
     };
   }
   const outcome = await callAgentPhone(input);
@@ -216,16 +307,24 @@ export async function sendOwnerUpdate(
 ): Promise<MockExternalAction> {
   const owner = process.env.OWNER_PHONE_NUMBER?.trim();
   const hasKey = !inMockMode();
-  if (!hasKey || !owner || !looksLikePhone(owner)) {
+  const forceMock = forceMockSendEnabled();
+  if (!hasKey || !owner || !looksLikePhone(owner) || forceMock) {
     const fallback = owner || "+15555550123";
+    const why = !hasKey
+      ? "no AGENTPHONE_API_KEY"
+      : forceMock
+        ? "AGENTPHONE_FORCE_MOCK_SEND=true"
+        : !owner
+          ? "OWNER_PHONE_NUMBER missing"
+          : "OWNER_PHONE_NUMBER looks synthetic";
     return {
       name: "agentphone.mock.owner_update.sent",
       ok: true,
       ref: nanoid("ap"),
-      detail: `SMS to owner ${fallback}: ${preview(message)} (demo${owner && !looksLikePhone(owner) ? " — OWNER_PHONE_NUMBER looks synthetic" : !owner ? " — OWNER_PHONE_NUMBER missing" : ""}).`,
+      detail: `SMS to owner ${fallback}: ${preview(message)} (demo — ${why}).`,
     };
   }
-  const outcome = await callAgentPhone({ to: owner, body: message });
+  const outcome = await callAgentPhone({ to: owner, body: message, live: true });
   return {
     name: outcome.ok ? "agentphone.owner_update.sent" : outcome.action,
     ok: outcome.ok,
@@ -238,6 +337,9 @@ export async function sendDirectSMS(input: {
   to: string;
   body: string;
   source_id?: string;
+  agentId?: string;
+  conversationId?: string;
+  numberId?: string;
 }): Promise<SendOutcome> {
   if (inMockMode()) {
     return {
@@ -248,7 +350,24 @@ export async function sendDirectSMS(input: {
       mode: "mock",
     };
   }
-  return callAgentPhone(input);
+  if (forceMockSendEnabled()) {
+    return {
+      ok: true,
+      action: "agentphone.mock.sms.sent",
+      ref: nanoid("ap"),
+      detail: `Mock send to ${input.to}: ${preview(input.body)} (AGENTPHONE_FORCE_MOCK_SEND=true).`,
+      mode: "mock",
+    };
+  }
+  return callAgentPhone({
+    to: input.to,
+    body: input.body,
+    source_id: input.source_id,
+    agentId: input.agentId,
+    conversationId: input.conversationId,
+    numberId: input.numberId,
+    live: true,
+  });
 }
 
 export async function getInboundSMS(): Promise<
@@ -315,6 +434,14 @@ export interface ParsedSMS {
   body: string;
   received_at: string;
   event_type: string;
+  /**
+   * Upstream provider identifiers we need to thread back through outbound
+   * sends so the reply lands on the same conversation/agent.
+   */
+  agentId?: string;
+  conversationId?: string;
+  numberId?: string;
+  channel?: "sms" | "imessage";
 }
 
 export interface ParsedCall {
@@ -504,11 +631,24 @@ export function normalizeInboundSMS(payload: unknown): ParsedSMS | null {
 
   const source_id =
     pick(cs, ID_KEYS_SMS) ??
+    pick(cs, ["conversation_id", "conversationId"]) ??
     `ap_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const to = pick(cs, TO_KEYS);
   const received_at =
     pick(cs, ["received_at", "created_at", "timestamp", "date"]) ??
     new Date().toISOString();
+
+  // AgentPhone metadata threaded into the outbound send so replies stay on
+  // the same conversation/agent. Top-level `channel` lives on the root,
+  // conversationId/numberId on `data`.
+  const agentId = pick(cs, ["agentId", "agent_id"]);
+  const conversationId = pick(cs, ["conversationId", "conversation_id"]);
+  const numberId = pick(cs, ["numberId", "number_id"]);
+  const channelRaw = pick(cs, ["channel"])?.toLowerCase();
+  const channel: "sms" | "imessage" | undefined =
+    channelRaw === "imessage" || channelRaw === "sms"
+      ? (channelRaw as "sms" | "imessage")
+      : undefined;
 
   return {
     source_id,
@@ -517,6 +657,10 @@ export function normalizeInboundSMS(payload: unknown): ParsedSMS | null {
     body,
     received_at,
     event_type: event_type || "sms.received",
+    agentId,
+    conversationId,
+    numberId,
+    channel,
   };
 }
 

@@ -67,16 +67,31 @@ async function ingestSMS(
   await store.upsertCustomer(customer);
 
   const messageId = `msg_ap_${slug(parsed.source_id)}`;
+  const hasAgentphoneMeta =
+    parsed.agentId || parsed.conversationId || parsed.numberId || parsed.channel;
   const message: InboundMessage = {
     id: messageId,
     customer_id: customerId,
     channel: "sms",
-    subject: `SMS from ${parsed.from}`,
+    subject:
+      parsed.channel === "imessage"
+        ? `iMessage from ${parsed.from}`
+        : `SMS from ${parsed.from}`,
     body: parsed.body,
     received_at: parsed.received_at,
     status: "new",
     amount_hint: detectAmount(parsed.body),
     source_id: parsed.source_id,
+    metadata: hasAgentphoneMeta
+      ? {
+          agentphone: {
+            agentId: parsed.agentId,
+            conversationId: parsed.conversationId,
+            numberId: parsed.numberId,
+            channel: parsed.channel,
+          },
+        }
+      : undefined,
   };
   const { inserted, message: stored } = await store.addMessage(message);
 
