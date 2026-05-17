@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import {
   ActionRecord,
+  ActionType,
   Channel,
+  CompanyWallet,
   Customer,
   InboundMessage,
   MockExternalAction,
@@ -77,7 +79,13 @@ export function Cockpit() {
   } | null>(null);
   const [arrivalIds, setArrivalIds] = useState<Set<string>>(new Set());
   const [pendingRemaining, setPendingRemaining] = useState<number>(0);
+  const [wallet, setWallet] = useState<CompanyWallet | null>(null);
+  const [walletFlash, setWalletFlash] = useState<{
+    kind: "refund" | "pipeline" | "revenue";
+    delta_cents: number;
+  } | null>(null);
   const arrivalTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const walletFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     try {
@@ -97,7 +105,7 @@ export function Cockpit() {
   }, [managerName]);
 
   const fetchAll = useCallback(async () => {
-    const [msgRes, polRes, actRes, statusRes, simRes] = await Promise.all([
+    const [msgRes, polRes, actRes, statusRes, simRes, walletRes] = await Promise.all([
       fetch("/api/messages", { cache: "no-store" }).then((r) => r.json()),
       fetch("/api/policies", { cache: "no-store" }).then((r) => r.json()),
       fetch("/api/actions", { cache: "no-store" }).then((r) => r.json()),
@@ -105,6 +113,9 @@ export function Cockpit() {
         .then((r) => r.json())
         .catch(() => null),
       fetch("/api/simulate/next", { cache: "no-store" })
+        .then((r) => r.json())
+        .catch(() => null),
+      fetch("/api/wallet", { cache: "no-store" })
         .then((r) => r.json())
         .catch(() => null),
     ]);
@@ -119,6 +130,7 @@ export function Cockpit() {
     if (simRes && typeof simRes.remaining === "number") {
       setPendingRemaining(simRes.remaining);
     }
+    if (walletRes?.wallet) setWallet(walletRes.wallet);
     setSelectedId((prev) => {
       if (prev) return prev;
       const list: InboundMessage[] = msgRes.messages ?? [];
@@ -264,8 +276,47 @@ export function Cockpit() {
         alert(data.error ?? "Failed to process");
         return;
       }
-      setActiveResult(data.result as ProcessResult);
+      const processed = data.result as ProcessResult;
+      setActiveResult(processed);
       setPipelineStep("done");
+      // Apply the wallet update returned by /api/process — flash the card so
+      // the audience can see the available balance move in real time.
+      if (data.wallet) {
+        const prevAvail = wallet?.available_cents ?? null;
+        const prevRefund = wallet?.refunded_today_cents ?? null;
+        const prevPending = wallet?.pending_cents ?? null;
+        setWallet(data.wallet as CompanyWallet);
+        const next = data.wallet as CompanyWallet;
+        let kind: "refund" | "pipeline" | "revenue" | null = null;
+        let delta = 0;
+        if (
+          prevRefund != null &&
+          next.refunded_today_cents > prevRefund
+        ) {
+          kind = "refund";
+          delta = next.refunded_today_cents - prevRefund;
+        } else if (
+          prevPending != null &&
+          next.pending_cents > prevPending
+        ) {
+          kind = "pipeline";
+          delta = next.pending_cents - prevPending;
+        } else if (
+          prevAvail != null &&
+          next.available_cents > prevAvail
+        ) {
+          kind = "revenue";
+          delta = next.available_cents - prevAvail;
+        }
+        if (kind) {
+          setWalletFlash({ kind, delta_cents: delta });
+          if (walletFlashTimer.current) clearTimeout(walletFlashTimer.current);
+          walletFlashTimer.current = setTimeout(
+            () => setWalletFlash(null),
+            6000,
+          );
+        }
+      }
       await fetchAll();
     } catch {
       clearInterval(tick);
@@ -318,7 +369,7 @@ export function Cockpit() {
       <JustArrivedToast item={justArrived} onDismiss={() => setJustArrived(null)} />
 
       <div className="grid gap-5 lg:grid-cols-12">
-        <section className="lg:col-span-5">
+        <section className="lg:col-span-4">
           <IntakeColumn
             messages={messages}
             customers={customers}
@@ -343,14 +394,15 @@ export function Cockpit() {
           />
         </section>
 
-        <section className="lg:col-span-2">
+        <section className="lg:col-span-3 space-y-5">
+          <WalletCard wallet={wallet} flash={walletFlash} />
           {policies && (
             <PoliciesCard policies={policies} onChange={updatePolicies} />
           )}
         </section>
       </div>
 
-      <LeverageStrip stats={stats} />
+      <LeverageStrip stats={stats} wallet={wallet} />
 
       <OperationalFeed
         actions={actions}
@@ -750,45 +802,126 @@ function buildTimelineSteps(
   channel: Channel,
   result: ProcessResult | null,
 ): { id: PipelineStep; label: string }[] {
-  const channelLabel =
-    channel === "email"
-      ? "Email received"
-      : channel === "sms"
-        ? "SMS received"
-        : channel === "phone_transcript"
-          ? "Phone call transcribed"
-          : channel === "social_dm"
-            ? "Instagram DM received"
-            : "Inbound received";
+  const channelReceived = channelReceivedLabel(channel);
 
-  const decisionLabel = result
-    ? `${DECISION_LABEL[result.decision] ?? result.decision} · ${CLASS_LABEL[result.classification] ?? result.classification}`
-    : "Decision made";
+  // When there's no result yet, fall back to generic-but-honest labels.
+  if (!result) {
+    return [
+      { id: "received", label: channelReceived },
+      { id: "policy", label: "Policy checked" },
+      { id: "decided", label: "Decision made" },
+      { id: "acting", label: "External actions executed" },
+      { id: "reply", label: "Reply sent to customer" },
+      { id: "owner", label: "Owner updated" },
+    ];
+  }
 
-  const primaryAction = result
-    ? prettyPrimaryAction(result)
-    : "External actions executed";
+  const replyLabel = replySentLabel(channel);
 
-  return [
-    { id: "received", label: channelLabel },
-    { id: "policy", label: "Policy checked" },
-    { id: "decided", label: decisionLabel },
-    { id: "acting", label: primaryAction },
-    { id: "reply", label: "Reply sent to customer" },
-    { id: "owner", label: "Owner updated" },
-  ];
+  switch (result.action_type as ActionType) {
+    case "refund_issued": {
+      const amt = result.detected_amount
+        ? ` ($${result.detected_amount.toFixed(2)})`
+        : "";
+      return [
+        { id: "received", label: channelReceived },
+        { id: "policy", label: "Refund policy checked" },
+        { id: "decided", label: `Refund approved${amt}` },
+        { id: "acting", label: "Sponge wallet debited" },
+        { id: "reply", label: replyLabel },
+        { id: "owner", label: "Owner updated" },
+      ];
+    }
+    case "sponsorship_countered":
+    case "discount_offered": {
+      const counter = result.counter_offer
+        ? ` at $${result.counter_offer.toLocaleString()}`
+        : "";
+      return [
+        { id: "received", label: channelReceived },
+        { id: "policy", label: "Pricing policy checked" },
+        { id: "decided", label: `Counter-offered${counter}` },
+        { id: "acting", label: "Sponge payment link created" },
+        { id: "reply", label: replyLabel },
+        { id: "owner", label: "Owner updated" },
+      ];
+    }
+    case "meeting_booked": {
+      const channelLabel =
+        channel === "phone_transcript"
+          ? "Call transcript received"
+          : channelReceived;
+      return [
+        { id: "received", label: channelLabel },
+        { id: "policy", label: "Lead qualified" },
+        { id: "decided", label: "Calendar checked" },
+        { id: "acting", label: "Meeting booked" },
+        { id: "reply", label: replyLabel },
+        { id: "owner", label: "Owner updated" },
+      ];
+    }
+    case "owner_escalated": {
+      return [
+        { id: "received", label: channelReceived },
+        { id: "policy", label: "Escalation language detected" },
+        { id: "decided", label: "Routed to owner" },
+        { id: "acting", label: "Holding reply drafted" },
+        { id: "reply", label: replyLabel },
+        { id: "owner", label: "Owner texted directly" },
+      ];
+    }
+    case "auto_reply_sent":
+    default: {
+      return [
+        { id: "received", label: channelReceived },
+        { id: "policy", label: "Policy checked" },
+        {
+          id: "decided",
+          label: `${DECISION_LABEL[result.decision] ?? result.decision} · ${CLASS_LABEL[result.classification] ?? result.classification}`,
+        },
+        { id: "acting", label: prettyPrimaryAction(result) },
+        { id: "reply", label: replyLabel },
+        { id: "owner", label: "Owner updated" },
+      ];
+    }
+  }
+}
+
+function replySentLabel(channel: Channel): string {
+  switch (channel) {
+    case "sms":
+      return "SMS reply sent";
+    case "phone_transcript":
+      return "SMS follow-up sent";
+    case "social_dm":
+      return "DM reply queued";
+    case "email":
+    default:
+      return "Reply sent to customer";
+  }
+}
+
+function channelReceivedLabel(channel: Channel): string {
+  switch (channel) {
+    case "email":
+      return "Email received";
+    case "sms":
+      return "SMS received";
+    case "phone_transcript":
+      return "Phone call transcribed";
+    case "social_dm":
+      return "Instagram DM received";
+    default:
+      return "Inbound received";
+  }
 }
 
 function prettyPrimaryAction(result: ProcessResult): string {
   const names = result.mock_external_actions.map((a) => a.name);
-  if (names.some((n) => n.includes("sponge") && n.includes("refund")))
-    return "Sponge refund created";
-  if (names.some((n) => n.includes("sponge") && n.includes("payment_link")))
-    return "Sponge payment link sent";
-  if (names.some((n) => n.includes("google_calendar")))
-    return "Calendar meeting booked";
-  if (names.some((n) => n.includes("agentphone") && n.includes("owner")))
-    return "Owner SMS sent via AgentPhone";
+  for (const n of names) {
+    const h = humanizeAction(n);
+    if (h !== n) return h;
+  }
   return "External actions executed";
 }
 
@@ -810,11 +943,19 @@ function ResultPanel({
         />
       </div>
 
-      <div className="rounded-xl border border-ink-800 bg-ink-950/60 p-4">
-        <div className="label">
-          {managerName}&apos;s reply to the customer
+      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="label text-emerald-200/80">Reply sent to customer</div>
+            <div className="text-xs text-emerald-300/70">
+              via AgentMail · signed from {managerName}
+            </div>
+          </div>
+          <span className="pill border-emerald-500/40 bg-emerald-500/10 text-emerald-200">
+            ✓ Delivered
+          </span>
         </div>
-        <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink-100">
+        <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-emerald-50">
           {result.customer_response}
         </p>
       </div>
@@ -822,6 +963,33 @@ function ResultPanel({
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
         <div className="label text-amber-200/80">Owner update</div>
         <p className="mt-2 text-sm text-amber-50">{result.owner_summary}</p>
+      </div>
+
+      <div className="rounded-xl border border-ink-800 bg-ink-950/40 p-3">
+        <div className="label mb-2">Actions taken</div>
+        <ul className="space-y-1.5">
+          {result.mock_external_actions.map((act, i) => (
+            <li
+              key={act.ref + i}
+              className="flex items-center gap-2 text-xs text-ink-200"
+            >
+              <span
+                className={clsx(
+                  "inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px]",
+                  act.ok
+                    ? "bg-emerald-500/15 text-emerald-300"
+                    : "bg-rose-500/15 text-rose-300",
+                )}
+              >
+                {act.ok ? "✓" : "✕"}
+              </span>
+              <span className="text-ink-100">{humanizeAction(act.name)}</span>
+              <span className="ml-auto font-mono text-[10px] text-ink-500">
+                {act.ref}
+              </span>
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );
@@ -846,6 +1014,122 @@ function DetailRow({
       <div className="label">{label}</div>
       <div className="mt-1 text-sm text-ink-100">{value}</div>
     </div>
+  );
+}
+
+function WalletCard({
+  wallet,
+  flash,
+}: {
+  wallet: CompanyWallet | null;
+  flash: { kind: "refund" | "pipeline" | "revenue"; delta_cents: number } | null;
+}) {
+  if (!wallet) {
+    return (
+      <div className="card-tight text-sm text-ink-400">Loading wallet…</div>
+    );
+  }
+  const flashing = !!flash;
+  return (
+    <div
+      className={clsx(
+        "card relative overflow-hidden transition",
+        flashing && "ring-1 ring-accent/60 shadow-glow",
+      )}
+    >
+      <div className="border-b border-ink-800/80 px-5 py-3">
+        <h2 className="text-sm font-semibold tracking-wide text-ink-100">
+          Company wallet
+        </h2>
+        <p className="mt-0.5 text-[11px] text-ink-500">
+          Sponge powers financial actions.
+        </p>
+      </div>
+
+      <div className="px-5 py-4">
+        <div className="label">Available</div>
+        <div
+          className={clsx(
+            "mt-1 text-3xl font-semibold tracking-tight transition",
+            flash?.kind === "refund" ? "text-rose-200" : "text-ink-100",
+          )}
+        >
+          ${(wallet.available_cents / 100).toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}
+        </div>
+        {flash?.kind === "refund" && (
+          <div className="mt-1 text-xs font-medium text-rose-300">
+            −${(flash.delta_cents / 100).toFixed(2)} refunded via Sponge
+          </div>
+        )}
+        {flash?.kind === "pipeline" && (
+          <div className="mt-1 text-xs font-medium text-accent">
+            +${(flash.delta_cents / 100).toFixed(2)} pipeline (payment link)
+          </div>
+        )}
+        {flash?.kind === "revenue" && (
+          <div className="mt-1 text-xs font-medium text-emerald-300">
+            +${(flash.delta_cents / 100).toFixed(2)} revenue captured
+          </div>
+        )}
+      </div>
+
+      <ul className="divide-y divide-ink-800/60 border-t border-ink-800/80">
+        <WalletRow
+          label="Pending"
+          value={`$${(wallet.pending_cents / 100).toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}`}
+        />
+        <WalletRow
+          label="Refunded today"
+          value={`$${(wallet.refunded_today_cents / 100).toLocaleString(
+            undefined,
+            { minimumFractionDigits: 2, maximumFractionDigits: 2 },
+          )}`}
+          highlight={flash?.kind === "refund"}
+        />
+        <WalletRow
+          label="Revenue today"
+          value={`$${(wallet.revenue_generated_today_cents / 100).toLocaleString(
+            undefined,
+            { minimumFractionDigits: 2, maximumFractionDigits: 2 },
+          )}`}
+          highlight={flash?.kind === "revenue"}
+        />
+      </ul>
+
+      <div className="border-t border-ink-800/80 px-5 py-2 text-[11px] text-ink-500">
+        Updated {timeAgo(wallet.updated_at)}
+      </div>
+    </div>
+  );
+}
+
+function WalletRow({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <li className="flex items-center justify-between px-5 py-2.5 text-sm">
+      <span className="text-ink-400">{label}</span>
+      <span
+        className={clsx(
+          "font-medium",
+          highlight ? "text-rose-200" : "text-ink-100",
+        )}
+      >
+        {value}
+      </span>
+    </li>
   );
 }
 
@@ -1084,11 +1368,15 @@ function ExpandedWorkflow({
   message: InboundMessage | null;
   managerName: string;
 }) {
+  const financial = financialCallout(action);
   return (
     <div className="space-y-4 border-t border-ink-800/60 bg-ink-950/30 px-5 py-5">
       {message && (
         <div className="rounded-lg border border-ink-800 bg-ink-950/60 p-3">
-          <div className="label">Inbound message</div>
+          <div className="label">
+            Inbound · {CHANNEL_LABEL[message.channel]}
+          </div>
+          <div className="mt-1 text-xs text-ink-500">{message.subject}</div>
           <p className="mt-1 text-sm text-ink-200">{message.body}</p>
         </div>
       )}
@@ -1098,15 +1386,52 @@ function ExpandedWorkflow({
           <p className="mt-1 text-sm text-ink-100">{action.policy_applied}</p>
         </div>
         <div className="rounded-lg border border-ink-800 bg-ink-950/40 p-3">
-          <div className="label">Reasoning summary</div>
-          <p className="mt-1 text-sm text-ink-100">
-            {action.reasoning_summary || "—"}
+          <div className="label">Decision</div>
+          <p className="mt-1 text-sm font-medium text-accent">
+            {DECISION_LABEL[action.decision] ?? action.decision} ·{" "}
+            <span className="text-ink-100 font-normal">
+              {CLASS_LABEL[action.classification] ?? action.classification}
+            </span>
           </p>
+          <div className="mt-1 text-xs text-ink-400">
+            {action.reasoning_summary || "—"}
+          </div>
         </div>
       </div>
-      <div className="rounded-lg border border-ink-800 bg-ink-950/40 p-3">
-        <div className="label">{managerName}&apos;s reply to the customer</div>
-        <p className="mt-1 whitespace-pre-wrap text-sm text-ink-100">
+      {financial && (
+        <div
+          className={clsx(
+            "rounded-lg border p-3",
+            financial.tone === "debit"
+              ? "border-rose-500/30 bg-rose-500/5"
+              : "border-accent/30 bg-accent/5",
+          )}
+        >
+          <div
+            className={clsx(
+              "label",
+              financial.tone === "debit"
+                ? "text-rose-200/80"
+                : "text-accent/80",
+            )}
+          >
+            Financial action
+          </div>
+          <p
+            className={clsx(
+              "mt-1 text-sm",
+              financial.tone === "debit" ? "text-rose-50" : "text-accent",
+            )}
+          >
+            {financial.label}
+          </p>
+        </div>
+      )}
+      <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+        <div className="label text-emerald-200/80">
+          {managerName}&apos;s reply to the customer
+        </div>
+        <p className="mt-1 whitespace-pre-wrap text-sm text-emerald-50">
           {action.customer_response}
         </p>
       </div>
@@ -1138,6 +1463,9 @@ function ExpandedWorkflow({
                   <div className="text-ink-400">{act.detail}</div>
                 )}
               </div>
+              <span className="ml-2 font-mono text-[10px] text-ink-500">
+                {act.ref}
+              </span>
             </li>
           ))}
         </ul>
@@ -1146,7 +1474,53 @@ function ExpandedWorkflow({
   );
 }
 
-function LeverageStrip({ stats }: { stats: Stats }) {
+function financialCallout(
+  action: ActionRecord,
+): { label: string; tone: "debit" | "credit" } | null {
+  if (action.action_type === "refund_issued") {
+    const amt = Math.abs(action.revenue_delta || 0);
+    return {
+      label: `Sponge refund created for $${amt.toFixed(2)} · debited from wallet`,
+      tone: "debit",
+    };
+  }
+  if (
+    action.action_type === "sponsorship_countered" ||
+    action.action_type === "discount_offered"
+  ) {
+    const amt = action.counter_offer ?? 0;
+    if (amt > 0) {
+      return {
+        label: `Sponge payment link sent for $${amt.toLocaleString()} · added to pending`,
+        tone: "credit",
+      };
+    }
+  }
+  if (action.action_type === "meeting_booked" && action.revenue_delta > 0) {
+    return {
+      label: `Lead booked · $${action.revenue_delta.toLocaleString()} expected revenue`,
+      tone: "credit",
+    };
+  }
+  return null;
+}
+
+function LeverageStrip({
+  stats,
+  wallet,
+}: {
+  stats: Stats;
+  wallet: CompanyWallet | null;
+}) {
+  const refundedToday = wallet
+    ? wallet.refunded_today_cents / 100
+    : stats.refundsTotal;
+  const revenueToday = wallet
+    ? wallet.revenue_generated_today_cents / 100
+    : stats.revenueGenerated;
+  const pipelineDollars = stats.pipelineCreated;
+  const impact = revenueToday + pipelineDollars - refundedToday;
+
   return (
     <div className="card">
       <div className="border-b border-ink-800/80 px-5 py-3">
@@ -1157,10 +1531,11 @@ function LeverageStrip({ stats }: { stats: Stats }) {
       <div className="grid grid-cols-2 gap-px bg-ink-800/60 sm:grid-cols-4">
         <LeverageCell
           label="Revenue impact"
-          value={`${stats.revenueImpact >= 0 ? "+" : "−"}$${Math.abs(
-            stats.revenueImpact,
-          ).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-          hint={`+$${stats.revenueGenerated.toFixed(0)} new · −$${stats.refundsTotal.toFixed(0)} refunds`}
+          value={`${impact >= 0 ? "+" : "−"}$${Math.abs(impact).toLocaleString(
+            undefined,
+            { maximumFractionDigits: 0 },
+          )}`}
+          hint={`+$${revenueToday.toFixed(0)} revenue · +$${pipelineDollars.toFixed(0)} pipeline · −$${refundedToday.toFixed(0)} refunds`}
         />
         <LeverageCell
           label="Meetings booked"
@@ -1169,7 +1544,9 @@ function LeverageStrip({ stats }: { stats: Stats }) {
         />
         <LeverageCell
           label="Refunds handled"
-          value={`${stats.refundsApproved + stats.refundsEscalated}`}
+          value={`$${refundedToday.toLocaleString(undefined, {
+            maximumFractionDigits: 0,
+          })}`}
           hint={`${stats.refundsApproved} approved · ${stats.refundsEscalated} held`}
         />
         <LeverageCell
@@ -1207,6 +1584,7 @@ interface Stats {
   refundsEscalated: number;
   refundsTotal: number;
   revenueGenerated: number;
+  pipelineCreated: number;
   revenueImpact: number;
   meetingsBooked: number;
   escalations: number;
@@ -1218,6 +1596,7 @@ function computeStats(actions: ActionRecord[]): Stats {
   let refundsEscalated = 0;
   let refundsTotal = 0;
   let revenueGenerated = 0;
+  let pipelineCreated = 0;
   let meetingsBooked = 0;
   let escalations = 0;
   let interruptionsAvoided = 0;
@@ -1234,13 +1613,21 @@ function computeStats(actions: ActionRecord[]): Stats {
     if (a.action_type === "owner_escalated") escalations += 1;
     if (a.decision !== "escalate_to_owner") interruptionsAvoided += 1;
     if (a.revenue_delta > 0) revenueGenerated += a.revenue_delta;
+    if (
+      (a.action_type === "discount_offered" ||
+        a.action_type === "sponsorship_countered") &&
+      typeof a.counter_offer === "number"
+    ) {
+      pipelineCreated += a.counter_offer;
+    }
   }
   return {
     refundsApproved,
     refundsEscalated,
     refundsTotal,
     revenueGenerated,
-    revenueImpact: revenueGenerated - refundsTotal,
+    pipelineCreated,
+    revenueImpact: revenueGenerated + pipelineCreated - refundsTotal,
     meetingsBooked,
     escalations,
     interruptionsAvoided,
@@ -1279,17 +1666,38 @@ function prettySentence(action: ActionRecord, managerName: string): string {
 }
 
 function humanizeAction(name: string): string {
-  if (name.includes("sponge") && name.includes("refund"))
+  if (/sponge\.(mock\.)?refund\.created/i.test(name))
     return "Sponge refund created";
-  if (name.includes("sponge") && name.includes("payment_link"))
-    return "Sponge payment link generated";
-  if (name.includes("agentmail")) return "AgentMail reply sent";
-  if (name.includes("agentphone") && name.includes("owner"))
-    return "AgentPhone owner SMS sent";
-  if (name.includes("agentphone") && name.includes("sms"))
-    return "AgentPhone SMS sent";
-  if (name.includes("google_calendar")) return "Calendar meeting booked";
-  if (name.includes("supermemory")) return "Decision saved to Supermemory";
+  if (/sponge\.(mock\.)?payment_link\.created/i.test(name))
+    return "Sponge payment link created";
+  if (/sponge\.(mock\.)?customer\.loaded/i.test(name))
+    return "Sponge customer looked up";
+  if (/sponge\.(mock\.)?balance\.loaded/i.test(name))
+    return "Sponge balance fetched";
+  if (/agentmail\.(mock\.)?reply/i.test(name)) return "Customer reply sent";
+  if (/agentmail\.(mock\.)?inbox\.listed/i.test(name))
+    return "AgentMail inbox listed";
+  if (/agentphone\.(mock\.)?owner_update/i.test(name)) return "Owner texted";
+  if (/agentphone\.(mock\.)?sms\.owner/i.test(name)) return "Owner texted";
+  if (/agentphone\.sms\.failed/i.test(name)) return "SMS send failed";
+  if (/agentphone\.sms\.skipped/i.test(name)) return "SMS skipped (synthetic)";
+  if (/agentphone\.(mock\.)?sms/i.test(name)) return "SMS reply sent";
+  if (/agentphone\.(mock\.)?call/i.test(name))
+    return "Call placed via AgentPhone";
+  if (/agentphone\.(mock\.)?inbound_sms/i.test(name))
+    return "Inbound SMS received";
+  if (/agentphone\.(mock\.)?transcript/i.test(name))
+    return "Call transcript loaded";
+  if (/social\.(mock\.)?dm\.replied/i.test(name)) return "DM reply queued";
+  if (
+    /google_calendar\.events\.insert/i.test(name) ||
+    /calendar\.(mock\.)?meeting/i.test(name)
+  )
+    return "Meeting booked";
+  if (/supermemory\.(mock\.)?decision\.saved/i.test(name))
+    return "Decision saved to company memory";
+  if (/supermemory\.(mock\.)?memory\.searched/i.test(name))
+    return "Company memory searched";
   return name;
 }
 

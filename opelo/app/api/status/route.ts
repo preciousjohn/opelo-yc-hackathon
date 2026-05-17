@@ -44,9 +44,13 @@ export async function GET() {
     ]),
     check("agentphone", "AgentPhone — SMS / calls", [
       "AGENTPHONE_API_KEY",
+      "AGENTPHONE_NUMBER",
       "AGENTPHONE_BASE_URL",
     ]),
-    check("agentmail", "AgentMail — email replies", ["AGENTMAIL_API_KEY"]),
+    check("agentmail", "AgentMail — email replies", [
+      "AGENTMAIL_API_KEY",
+      "AGENTMAIL_INBOX_ID",
+    ]),
     check("supermemory", "Supermemory — company memory", [
       "SUPERMEMORY_API_KEY",
     ]),

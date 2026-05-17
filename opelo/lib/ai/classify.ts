@@ -13,18 +13,18 @@ const SCHEDULE_TERMS = ["schedule", "book a call", "call next", "available", "me
 const LEAD_TERMS = ["need help", "build", "looking to hire", "project", "workflow"];
 
 function detectAmount(text: string): number | undefined {
+  // Prefer the FIRST dollar amount — in negotiation-shaped messages people
+  // lead with their budget ("my budget is $1,500. Can you do that instead of
+  // $3,000?") and we want the customer's offer, not the listing price.
   const matches = Array.from(
     text.matchAll(/\$\s?([0-9][0-9,]*(?:\.[0-9]{1,2})?)(\s?[kK])?/g),
   );
-  let best: number | undefined;
   for (const m of matches) {
     const raw = m[1].replace(/,/g, "");
     let n = parseFloat(raw);
     if (m[2]) n *= 1000;
-    if (!Number.isFinite(n)) continue;
-    if (best === undefined || n > best) best = n;
+    if (Number.isFinite(n)) return n;
   }
-  if (best !== undefined) return best;
   const kMatch = text.match(/\b([0-9]+(?:\.[0-9]+)?)\s?k\b/i);
   if (kMatch) return parseFloat(kMatch[1]) * 1000;
   return undefined;

@@ -18,8 +18,9 @@ import {
 } from "../integrations/sponge";
 import {
   sendOwnerUpdate as agentphoneSendOwnerUpdate,
-  toMockExternalAction as agentphoneAction,
+  sendSMS as agentphoneSendSMS,
 } from "../integrations/agentphone";
+import { nanoid } from "../integrations/util";
 import { calendar } from "../integrations/calendar";
 import {
   saveDecision as supermemorySaveDecision,
@@ -116,6 +117,7 @@ export async function processInboundMessage(
     llm_used,
     revenue_delta: plan.revenue_delta,
     detected_amount: hints.detected_amount,
+    counter_offer: plan.counter_offer,
   };
 }
 
@@ -166,7 +168,7 @@ function decide(args: DecideArgs): DecisionPlan {
           action_type: "refund_issued",
           policy_applied: `Auto-approve refunds under $${policies.refund_auto_approve_under}`,
           fallback_reasoning_summary: `Refund of $${amt.toFixed(2)} fell under the auto-approve threshold and the customer has no prior refunds.`,
-          fallback_customer_response: `Thanks for reaching out — I've approved your $${amt.toFixed(2)} refund. You should see it reflected on your statement within a few business days. If there's anything I can do better next time, I'd love to hear it.`,
+          fallback_customer_response: `Thanks for reaching out — I've approved and processed your $${amt.toFixed(2)} refund. You should see it on your statement within a few business days. If there's anything I can do better next time, I'd love to hear it.`,
           fallback_owner_summary: `Approved a $${amt.toFixed(2)} refund under your auto-refund policy.`,
           revenue_delta: -amt,
         };
@@ -367,15 +369,47 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     );
   }
 
-  // Always reply to the customer
-  actions.push(
-    await agentmail.sendReply({
-      to: customer.email,
-      subject: `Re: ${message.subject}`,
-      body: customer_response,
-      in_reply_to: message.id,
-    }),
-  );
+  // Reply to the customer via the same channel they used to reach us. The
+  // `live` flag gates real send to webhook-ingested customers (id prefix
+  // cus_live_) so seeded demo customers stay mocked.
+  const isLiveCustomer = customer.id.startsWith("cus_live_");
+  switch (message.channel) {
+    case "email":
+      actions.push(
+        await agentmail.sendReply({
+          to: customer.email,
+          subject: `Re: ${message.subject}`,
+          body: customer_response,
+          in_reply_to: message.id,
+          source_id: message.source_id,
+          thread_id: message.thread_id,
+          live: isLiveCustomer,
+        }),
+      );
+      break;
+    case "sms":
+    case "phone_transcript": {
+      const to = customer.phone || customer.email || "+15555550100";
+      actions.push(
+        await agentphoneSendSMS({
+          to,
+          body: customer_response,
+          live: isLiveCustomer && !!customer.phone,
+          source_id: message.source_id,
+        }),
+      );
+      break;
+    }
+    case "social_dm":
+    default:
+      actions.push({
+        name: "social.mock.dm.replied",
+        ok: true,
+        ref: nanoid("dm"),
+        detail: `DM reply queued for ${customer.name} (demo — social DM send is mocked).`,
+      });
+      break;
+  }
 
   const notifyOwner =
     plan.action_type === "owner_escalated" ||
@@ -384,13 +418,7 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     plan.action_type === "sponsorship_countered" ||
     plan.action_type === "discount_offered";
   if (notifyOwner) {
-    const resp = await agentphoneSendOwnerUpdate(`Opelo: ${owner_summary}`);
-    actions.push(
-      agentphoneAction(
-        resp,
-        `SMS to owner ${resp.data.to}: ${resp.data.preview}`,
-      ),
-    );
+    actions.push(await agentphoneSendOwnerUpdate(`Opelo: ${owner_summary}`));
   }
 
   const memResp = await supermemorySaveDecision({

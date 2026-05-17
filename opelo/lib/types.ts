@@ -29,6 +29,7 @@ export interface Customer {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   vip: boolean;
   prior_refunds: number;
   lifetime_value: number;
@@ -79,6 +80,7 @@ export interface ProcessResult {
   llm_used: boolean;
   revenue_delta: number;
   detected_amount?: number;
+  counter_offer?: number;
 }
 
 export interface ActionRecord {
@@ -94,8 +96,18 @@ export interface ActionRecord {
   action_type: ActionType;
   mock_external_actions: MockExternalAction[];
   revenue_delta: number;
+  counter_offer?: number;
   llm_used: boolean;
   created_at: string;
+}
+
+export interface CompanyWallet {
+  available_cents: number;
+  pending_cents: number;
+  refunded_today_cents: number;
+  revenue_generated_today_cents: number;
+  currency: "USD";
+  updated_at: string;
 }
 
 export interface OwnerSummary {

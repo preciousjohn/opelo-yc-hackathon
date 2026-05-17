@@ -1,5 +1,6 @@
 import {
   ActionRecord,
+  CompanyWallet,
   Customer,
   InboundMessage,
   Policies,
@@ -303,10 +304,24 @@ export function seedActions(): ActionRecord[] {
         },
       ],
       revenue_delta: 0,
+      counter_offer: 2000,
       llm_used: false,
       created_at: earlier(52),
     },
   ];
+}
+
+export function seedWallet(): CompanyWallet {
+  // Available reflects the studio's cash on hand; refunded_today is pre-loaded
+  // with the seeded $49 Priya refund so the metric already has history.
+  return {
+    available_cents: 1_842_300,
+    pending_cents: 96_400,
+    refunded_today_cents: 4_900,
+    revenue_generated_today_cents: 0,
+    currency: "USD",
+    updated_at: new Date().toISOString(),
+  };
 }
 
 export function seedPendingInbound(): InboundMessage[] {

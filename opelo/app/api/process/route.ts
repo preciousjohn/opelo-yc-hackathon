@@ -54,13 +54,40 @@ export async function POST(req: NextRequest) {
       action_type: result.action_type,
       mock_external_actions: result.mock_external_actions,
       revenue_delta: result.revenue_delta,
+      counter_offer: result.counter_offer,
       llm_used: result.llm_used,
       created_at: new Date().toISOString(),
     };
     await store.addAction(record);
     await store.updateMessageStatus(messageId, "handled");
 
-    return NextResponse.json({ ok: true, result, action: record });
+    // Reflect the decision in the company wallet so the cockpit can show
+    // available balance and refunded-today move in real time.
+    let wallet = await store.getWallet();
+    if (result.action_type === "refund_issued") {
+      const amountDollars =
+        result.detected_amount ?? Math.abs(result.revenue_delta ?? 0);
+      if (amountDollars > 0) {
+        wallet = await store.applyRefund(Math.round(amountDollars * 100));
+      }
+    } else if (
+      result.action_type === "discount_offered" ||
+      result.action_type === "sponsorship_countered"
+    ) {
+      const pipelineDollars = result.counter_offer ?? 0;
+      if (pipelineDollars > 0) {
+        wallet = await store.applyPaymentLinkCreated(
+          Math.round(pipelineDollars * 100),
+        );
+      }
+    } else if (result.revenue_delta > 0) {
+      // Confirmed new revenue (accepted project, auto-booked lead).
+      wallet = await store.applyRevenueGenerated(
+        Math.round(result.revenue_delta * 100),
+      );
+    }
+
+    return NextResponse.json({ ok: true, result, action: record, wallet });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });

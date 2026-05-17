@@ -75,6 +75,29 @@ export async function callGemini(
 }
 
 function buildPrompt(input: GeminiInput): string {
+  const isRefundApprove =
+    input.classification === "refund_request" && input.decision === "approve";
+
+  const guardrails: string[] = [];
+  if (isRefundApprove) {
+    const amt = input.detected_amount
+      ? `$${input.detected_amount.toFixed(2)}`
+      : "the requested amount";
+    guardrails.push(
+      `CRITICAL: this is a refund approval. The customer_response MUST explicitly state that the refund has been BOTH approved AND processed (the money has been moved), include the dollar amount (${amt}), and set timing expectations (e.g. "within a few business days"). Do not merely say "approved" — the customer's card has been credited.`,
+    );
+  }
+  if (input.decision === "negotiate") {
+    guardrails.push(
+      `For negotiations, the customer_response should propose the counter-offer warmly and make next steps clear.`,
+    );
+  }
+  if (input.decision === "schedule") {
+    guardrails.push(
+      `For scheduling, the customer_response should reference the booked time or available windows so the customer can act immediately.`,
+    );
+  }
+
   return `Business: ${input.business_name} (owner: ${input.owner_name}). You are "${input.managerName}", the AI operations manager.
 
 Decision context (already classified by deterministic engine — refine if clearly wrong, otherwise keep):
@@ -100,7 +123,9 @@ Return ONLY a JSON object matching this exact schema:
   "owner_summary": "one sentence the owner can read at a glance",
   "action_type": "refund_issued|discount_offered|sponsorship_declined|sponsorship_countered|meeting_booked|owner_escalated|lead_nurtured|auto_reply_sent",
   "suggested_external_actions": ["sponge.refund.created", "agentmail.reply", "agentphone.sms.owner_update"]
-}`;
+}
+
+${guardrails.length ? "Guardrails:\n- " + guardrails.join("\n- ") : ""}`.trim();
 }
 
 function parseDecision(text: string): GeminiDecisionResponse | null {

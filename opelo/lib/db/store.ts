@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import {
   ActionRecord,
+  CompanyWallet,
   Customer,
   InboundMessage,
   OwnerSummary,
@@ -13,6 +14,7 @@ import {
   seedCustomers,
   seedMessages,
   seedPendingInbound,
+  seedWallet,
 } from "./seed";
 
 const DATA_DIR = path.join(process.cwd(), ".opelo-data");
@@ -25,6 +27,7 @@ interface Snapshot {
   actions: ActionRecord[];
   owner_summaries: OwnerSummary[];
   pending_inbound: InboundMessage[];
+  wallet: CompanyWallet;
 }
 
 let cache: Snapshot | null = null;
@@ -38,6 +41,7 @@ function initial(): Snapshot {
     actions: seedActions(),
     owner_summaries: [],
     pending_inbound: seedPendingInbound(),
+    wallet: seedWallet(),
   };
 }
 
@@ -56,6 +60,7 @@ async function readSnapshot(): Promise<Snapshot> {
     cache = JSON.parse(raw) as Snapshot;
     if (!cache.owner_summaries) cache.owner_summaries = [];
     if (!cache.pending_inbound) cache.pending_inbound = seedPendingInbound();
+    if (!cache.wallet) cache.wallet = seedWallet();
     return cache;
   } catch {
     cache = initial();
@@ -178,6 +183,46 @@ export const store = {
   async listOwnerSummaries(): Promise<OwnerSummary[]> {
     const snap = await readSnapshot();
     return snap.owner_summaries;
+  },
+  async getWallet(): Promise<CompanyWallet> {
+    const snap = await readSnapshot();
+    return snap.wallet;
+  },
+  async applyRefund(amountCents: number): Promise<CompanyWallet> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      const cents = Math.max(0, Math.round(amountCents));
+      snap.wallet.available_cents = Math.max(
+        0,
+        snap.wallet.available_cents - cents,
+      );
+      snap.wallet.refunded_today_cents += cents;
+      snap.wallet.updated_at = new Date().toISOString();
+      await persist();
+      return snap.wallet;
+    });
+  },
+  async applyPaymentLinkCreated(amountCents: number): Promise<CompanyWallet> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      const cents = Math.max(0, Math.round(amountCents));
+      // Pending = pipeline created via a payment link. Available is unchanged
+      // because the customer hasn't paid yet.
+      snap.wallet.pending_cents += cents;
+      snap.wallet.updated_at = new Date().toISOString();
+      await persist();
+      return snap.wallet;
+    });
+  },
+  async applyRevenueGenerated(amountCents: number): Promise<CompanyWallet> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      const cents = Math.max(0, Math.round(amountCents));
+      snap.wallet.revenue_generated_today_cents += cents;
+      snap.wallet.updated_at = new Date().toISOString();
+      await persist();
+      return snap.wallet;
+    });
   },
   async dequeueNextPending(): Promise<InboundMessage | null> {
     return withLock(async () => {
