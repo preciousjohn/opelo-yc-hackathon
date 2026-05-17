@@ -7,7 +7,9 @@ import {
   InboundMessage,
   OwnerSummary,
   Policies,
+  WebhookEvent,
 } from "../types";
+import { nanoid } from "../integrations/util";
 import {
   defaultPolicies,
   seedActions,
@@ -28,6 +30,7 @@ interface Snapshot {
   owner_summaries: OwnerSummary[];
   pending_inbound: InboundMessage[];
   wallet: CompanyWallet;
+  webhook_events: WebhookEvent[];
 }
 
 let cache: Snapshot | null = null;
@@ -42,6 +45,7 @@ function initial(): Snapshot {
     owner_summaries: [],
     pending_inbound: seedPendingInbound(),
     wallet: seedWallet(),
+    webhook_events: [],
   };
 }
 
@@ -61,6 +65,7 @@ async function readSnapshot(): Promise<Snapshot> {
     if (!cache.owner_summaries) cache.owner_summaries = [];
     if (!cache.pending_inbound) cache.pending_inbound = seedPendingInbound();
     if (!cache.wallet) cache.wallet = seedWallet();
+    if (!cache.webhook_events) cache.webhook_events = [];
     return cache;
   } catch {
     cache = initial();
@@ -223,6 +228,54 @@ export const store = {
       await persist();
       return snap.wallet;
     });
+  },
+  async addWebhookEvent(
+    event: Omit<WebhookEvent, "id" | "created_at"> & {
+      id?: string;
+      created_at?: string;
+    },
+  ): Promise<WebhookEvent> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      const full: WebhookEvent = {
+        id: event.id ?? nanoid("wh"),
+        created_at: event.created_at ?? new Date().toISOString(),
+        provider: event.provider,
+        event_type: event.event_type,
+        payload: event.payload,
+        parsed_kind: event.parsed_kind,
+        inserted_message_id: event.inserted_message_id,
+      };
+      snap.webhook_events.unshift(full);
+      // Cap to last 200 to keep the store readable.
+      if (snap.webhook_events.length > 200) {
+        snap.webhook_events.length = 200;
+      }
+      await persist();
+      return full;
+    });
+  },
+  async updateWebhookEvent(
+    id: string,
+    patch: Partial<Pick<WebhookEvent, "parsed_kind" | "inserted_message_id">>,
+  ): Promise<WebhookEvent | null> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      const e = snap.webhook_events.find((w) => w.id === id);
+      if (!e) return null;
+      if (patch.parsed_kind !== undefined) e.parsed_kind = patch.parsed_kind;
+      if (patch.inserted_message_id !== undefined)
+        e.inserted_message_id = patch.inserted_message_id;
+      await persist();
+      return e;
+    });
+  },
+  async listWebhookEvents(provider?: string): Promise<WebhookEvent[]> {
+    const snap = await readSnapshot();
+    const events = provider
+      ? snap.webhook_events.filter((e) => e.provider === provider)
+      : snap.webhook_events;
+    return [...events];
   },
   async dequeueNextPending(): Promise<InboundMessage | null> {
     return withLock(async () => {

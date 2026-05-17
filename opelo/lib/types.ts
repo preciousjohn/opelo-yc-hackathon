@@ -117,3 +117,13 @@ export interface OwnerSummary {
   text: string;
   created_at: string;
 }
+
+export interface WebhookEvent {
+  id: string;
+  provider: "agentphone" | "agentmail";
+  event_type: string;
+  payload: unknown;
+  parsed_kind?: "sms" | "call" | "email" | "unknown";
+  inserted_message_id?: string;
+  created_at: string;
+}

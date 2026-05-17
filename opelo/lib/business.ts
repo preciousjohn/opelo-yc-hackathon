@@ -13,8 +13,8 @@ export interface BusinessProfile {
 
 export const demoBusiness: BusinessProfile = {
   name: "Opelo Demo Studio",
-  ownerName: "Demo Owner",
-  managerName: "Maya",
+  ownerName: "the owner",
+  managerName: "Opelo",
   phone: process.env.OWNER_PHONE_NUMBER || "+15555550123",
   offerings: [
     { name: "Creator Course", priceCents: 8200 },
@@ -23,4 +23,4 @@ export const demoBusiness: BusinessProfile = {
   ],
 };
 
-export const DEFAULT_MANAGER_NAME = "Maya";
+export const DEFAULT_MANAGER_NAME = "Opelo";

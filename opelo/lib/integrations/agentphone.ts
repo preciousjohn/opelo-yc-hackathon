@@ -308,95 +308,264 @@ export async function getCallTranscript(
   });
 }
 
-export function normalizeInboundSMS(payload: unknown): {
+export interface ParsedSMS {
   source_id: string;
   from: string;
   to?: string;
   body: string;
   received_at: string;
   event_type: string;
-} | null {
-  if (!payload || typeof payload !== "object") return null;
-  const obj = payload as Record<string, unknown>;
-  const event_type =
-    pickString(obj, ["event", "event_type", "type"]) ?? "sms.received";
+}
 
-  // Only process events that look like inbound messages/SMS, OR any payload
-  // that already carries body+from (which means we've been handed an inner
-  // message object directly).
-  const inner = extractInnerMessage(obj);
-  const eventLooksRight =
-    /received|inbound|sms|message|conversation/i.test(event_type);
-  if (!inner && !eventLooksRight) return null;
+export interface ParsedCall {
+  source_id: string;
+  from: string;
+  to?: string;
+  transcript: string;
+  received_at: string;
+  event_type: string;
+  caller_name?: string;
+}
 
-  const m = inner ?? obj;
-  const fromRaw =
-    pickString(m, ["from", "from_number", "caller", "msisdn"]) ??
-    pickString(obj, ["from", "from_number", "caller"]);
-  const body =
-    pickString(m, ["body", "text", "content", "message"]) ??
-    pickString(obj, ["body", "text", "content", "message"]);
-  if (!fromRaw || !body) return null;
+// ─── Generic helpers ────────────────────────────────────────────────────────
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/**
+ * Build the list of candidate containers we'll search for fields. Order
+ * matters — earlier containers win when the same field appears in multiple
+ * places. We include the well-known wrapper paths AgentPhone, Twilio-likes,
+ * and generic webhook frameworks use.
+ */
+function buildCandidates(payload: unknown): Record<string, unknown>[] {
+  if (!isPlainObject(payload)) return [];
+  const seen = new Set<Record<string, unknown>>();
+  const out: Record<string, unknown>[] = [];
+  const push = (v: unknown) => {
+    if (isPlainObject(v) && !seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  };
+
+  const root = payload;
+  push(root);
+  push(root.data as unknown);
+  push(root.message as unknown);
+  push(root.sms as unknown);
+  push(root.call as unknown);
+  push(root.conversation as unknown);
+  push(root.event as unknown);
+  push(root.payload as unknown);
+
+  const data = isPlainObject(root.data) ? (root.data as Record<string, unknown>) : null;
+  if (data) {
+    push(data.message);
+    push(data.sms);
+    push(data.call);
+    push(data.conversation);
+    push(data.event);
+  }
+
+  const conv = isPlainObject(root.conversation)
+    ? (root.conversation as Record<string, unknown>)
+    : null;
+  if (conv) push(conv.message);
+
+  const event = isPlainObject(root.event)
+    ? (root.event as Record<string, unknown>)
+    : null;
+  if (event) push(event.data);
+
+  // First entries of `messages` / `data.messages` arrays.
+  const msgs = root.messages;
+  if (Array.isArray(msgs) && msgs.length > 0) push(msgs[0]);
+  if (data && Array.isArray(data.messages) && data.messages.length > 0)
+    push(data.messages[0] as unknown);
+
+  return out;
+}
+
+/**
+ * Walk the candidate list looking for any of the given keys. Supports dotted
+ * keys like "contact.phone" for one level of nesting.
+ */
+function pick(
+  candidates: Record<string, unknown>[],
+  keys: string[],
+): string | undefined {
+  for (const c of candidates) {
+    for (const k of keys) {
+      if (k.includes(".")) {
+        const [head, tail] = k.split(".");
+        const child = c[head];
+        if (isPlainObject(child)) {
+          const v = (child as Record<string, unknown>)[tail];
+          if (typeof v === "string" && v.trim()) return v.trim();
+          if (typeof v === "number" && Number.isFinite(v)) return String(v);
+        }
+      } else {
+        const v = c[k];
+        if (typeof v === "string" && v.trim()) return v.trim();
+        if (typeof v === "number" && Number.isFinite(v)) return String(v);
+      }
+    }
+  }
+  return undefined;
+}
+
+const BODY_KEYS = [
+  "body",
+  "text",
+  "content",
+  "message",
+  "message_text",
+  "input",
+  "value",
+];
+const TRANSCRIPT_KEYS = ["transcript", "transcription", "call_transcript"];
+const FROM_KEYS_SMS = [
+  "from",
+  "from_number",
+  "sender",
+  "sender_number",
+  "phone",
+  "phone_number",
+  "msisdn",
+  "contact.phone",
+  "participant.phone",
+];
+const FROM_KEYS_CALL = [
+  "from",
+  "from_number",
+  "caller",
+  "caller_number",
+  "phone",
+  "phone_number",
+  "contact.phone",
+];
+const TO_KEYS = [
+  "to",
+  "to_number",
+  "recipient",
+  "recipient_number",
+  "number",
+  "inbox_number",
+];
+const ID_KEYS_SMS = [
+  "id",
+  "message_id",
+  "sms_id",
+  "conversation_id",
+  "event_id",
+  "uid",
+];
+const ID_KEYS_CALL = [
+  "id",
+  "call_id",
+  "conversation_id",
+  "recording_id",
+  "event_id",
+];
+
+export function eventTypeOf(payload: unknown): string {
+  if (!isPlainObject(payload)) return "";
+  const v = payload.event ?? payload.event_type ?? payload.type;
+  return typeof v === "string" ? v : "";
+}
+
+// ─── SMS parser ─────────────────────────────────────────────────────────────
+
+export function normalizeInboundSMS(payload: unknown): ParsedSMS | null {
+  if (!isPlainObject(payload)) return null;
+  const cs = buildCandidates(payload);
+  const event_type = eventTypeOf(payload).toLowerCase();
+
+  const looksLikeCallEvent = /call|voice|recording|transcrib/i.test(event_type);
+  const looksLikeSMSEvent =
+    /sms|imessage|message|conversation|inbound|received/i.test(event_type);
+
+  // Prefer SMS-shaped body fields; only fall back to transcript if the event
+  // type clearly says SMS/message.
+  let body = pick(cs, BODY_KEYS);
+  if (!body && looksLikeSMSEvent) body = pick(cs, TRANSCRIPT_KEYS);
+
+  const from = pick(cs, FROM_KEYS_SMS);
+  if (!from || !body) return null;
+
+  // If it walks like a call (transcript field present, call event), don't
+  // claim it as SMS — let the call parser have it.
+  const hasTranscriptField = !!pick(cs, TRANSCRIPT_KEYS);
+  if ((looksLikeCallEvent || hasTranscriptField) && !looksLikeSMSEvent) {
+    return null;
+  }
 
   const source_id =
-    pickString(m, ["id", "message_id", "uid"]) ??
-    pickString(obj, ["id", "message_id"]) ??
+    pick(cs, ID_KEYS_SMS) ??
     `ap_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const to =
-    pickString(m, ["to", "to_number", "recipient"]) ??
-    pickString(obj, ["to", "to_number"]);
+  const to = pick(cs, TO_KEYS);
   const received_at =
-    pickString(m, ["received_at", "created_at", "timestamp", "date"]) ??
-    pickString(obj, ["received_at", "created_at", "timestamp"]) ??
+    pick(cs, ["received_at", "created_at", "timestamp", "date"]) ??
     new Date().toISOString();
 
   return {
     source_id,
-    from: fromRaw.trim(),
+    from,
     to,
-    body: body.trim(),
+    body,
     received_at,
-    event_type,
+    event_type: event_type || "sms.received",
   };
 }
 
-function extractInnerMessage(
-  payload: Record<string, unknown>,
-): Record<string, unknown> | null {
-  const candidates: unknown[] = [
-    payload.message,
-    payload.sms,
-    payload.data,
-    (payload.data as Record<string, unknown> | undefined)?.message,
-    (payload.data as Record<string, unknown> | undefined)?.sms,
-  ];
-  for (const c of candidates) {
-    if (c && typeof c === "object") {
-      const obj = c as Record<string, unknown>;
-      if (
-        obj.body ||
-        obj.text ||
-        obj.content ||
-        obj.from ||
-        obj.from_number
-      ) {
-        return obj;
-      }
-    }
-  }
-  return null;
-}
+// ─── Call parser ────────────────────────────────────────────────────────────
 
-function pickString(
-  obj: Record<string, unknown>,
-  keys: string[],
-): string | undefined {
-  for (const k of keys) {
-    const v = obj[k];
-    if (typeof v === "string" && v.trim()) return v.trim();
-    if (typeof v === "number") return String(v);
-  }
-  return undefined;
+export function normalizeInboundCall(payload: unknown): ParsedCall | null {
+  if (!isPlainObject(payload)) return null;
+  const cs = buildCandidates(payload);
+  const event_type = eventTypeOf(payload).toLowerCase();
+  const looksLikeCall =
+    /call|voice|recording|transcrib|phone/i.test(event_type);
+
+  // Transcript: prefer explicit transcript fields, then summary, then
+  // generic content/text.
+  const transcript =
+    pick(cs, TRANSCRIPT_KEYS) ??
+    pick(cs, ["summary", "text", "content"]);
+  if (!transcript) return null;
+
+  // Only accept as a call if either the event type screams "call" or one of
+  // the explicit transcript fields is what we matched on.
+  const usedTranscriptField = !!pick(cs, TRANSCRIPT_KEYS);
+  if (!looksLikeCall && !usedTranscriptField) return null;
+
+  const from = pick(cs, FROM_KEYS_CALL);
+  if (!from) return null;
+
+  const source_id =
+    pick(cs, ID_KEYS_CALL) ?? `apcall_${Date.now()}`;
+  const to = pick(cs, TO_KEYS);
+  const received_at =
+    pick(cs, ["received_at", "created_at", "timestamp", "date"]) ??
+    new Date().toISOString();
+  const caller_name = pick(cs, [
+    "caller_name",
+    "name",
+    "contact_name",
+    "display_name",
+  ]);
+
+  return {
+    source_id,
+    from,
+    to,
+    transcript,
+    received_at,
+    event_type: event_type || "call.transcribed",
+    caller_name,
+  };
 }
 
 export function toMockExternalAction(
@@ -419,5 +588,7 @@ export const agentphone = {
   getInboundCalls,
   getCallTranscript,
   normalizeInboundSMS,
+  normalizeInboundCall,
+  eventTypeOf,
   inMockMode,
 };

@@ -13,7 +13,7 @@ import {
   Policies,
   ProcessResult,
 } from "@/lib/types";
-import { DEFAULT_MANAGER_NAME, demoBusiness } from "@/lib/business";
+import { DEFAULT_MANAGER_NAME } from "@/lib/business";
 
 type PipelineStep =
   | "idle"
@@ -28,7 +28,7 @@ type PipelineStep =
 const CHANNEL_LABEL: Record<Channel, string> = {
   email: "Email",
   sms: "SMS",
-  phone_transcript: "Phone",
+  phone_transcript: "Call",
   social_dm: "Social DM",
   form: "Form",
 };
@@ -58,10 +58,11 @@ const CLASS_LABEL: Record<string, string> = {
   escalation: "Escalation",
 };
 
-const SIMULATE_INTERVAL_MS = 28000;
-
 export function Cockpit() {
-  const [managerName, setManagerName] = useState<string>(DEFAULT_MANAGER_NAME);
+  // Single product/agent name — no per-user customization. Opelo is the
+  // product, the AI manager, the only voice in the UI.
+  const managerName = DEFAULT_MANAGER_NAME;
+  const [businessName, setBusinessName] = useState<string>("");
   const [messages, setMessages] = useState<InboundMessage[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [policies, setPolicies] = useState<Policies | null>(null);
@@ -70,15 +71,12 @@ export function Cockpit() {
   const [activeResult, setActiveResult] = useState<ProcessResult | null>(null);
   const [pipelineStep, setPipelineStep] = useState<PipelineStep>("idle");
   const [working, setWorking] = useState(false);
-  const [llmProvider, setLlmProvider] = useState<string | null>(null);
-  const [llmModel, setLlmModel] = useState<string | null>(null);
   const [justArrived, setJustArrived] = useState<{
     id: string;
     name: string;
     channel: Channel;
   } | null>(null);
   const [arrivalIds, setArrivalIds] = useState<Set<string>>(new Set());
-  const [pendingRemaining, setPendingRemaining] = useState<number>(0);
   const [wallet, setWallet] = useState<CompanyWallet | null>(null);
   const [walletFlash, setWalletFlash] = useState<{
     kind: "refund" | "pipeline" | "revenue";
@@ -89,8 +87,8 @@ export function Cockpit() {
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem("opelo.managerName");
-      if (saved) setManagerName(saved);
+      const saved = window.localStorage.getItem("opelo.businessName");
+      if (saved) setBusinessName(saved);
     } catch {
       // ignore
     }
@@ -98,23 +96,17 @@ export function Cockpit() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem("opelo.managerName", managerName);
+      window.localStorage.setItem("opelo.businessName", businessName);
     } catch {
       // ignore
     }
-  }, [managerName]);
+  }, [businessName]);
 
   const fetchAll = useCallback(async () => {
-    const [msgRes, polRes, actRes, statusRes, simRes, walletRes] = await Promise.all([
+    const [msgRes, polRes, actRes, walletRes] = await Promise.all([
       fetch("/api/messages", { cache: "no-store" }).then((r) => r.json()),
       fetch("/api/policies", { cache: "no-store" }).then((r) => r.json()),
       fetch("/api/actions", { cache: "no-store" }).then((r) => r.json()),
-      fetch("/api/status", { cache: "no-store" })
-        .then((r) => r.json())
-        .catch(() => null),
-      fetch("/api/simulate/next", { cache: "no-store" })
-        .then((r) => r.json())
-        .catch(() => null),
       fetch("/api/wallet", { cache: "no-store" })
         .then((r) => r.json())
         .catch(() => null),
@@ -123,13 +115,6 @@ export function Cockpit() {
     setCustomers(msgRes.customers ?? []);
     setPolicies(polRes);
     setActions(actRes.actions ?? []);
-    if (statusRes?.llm) {
-      setLlmProvider(statusRes.llm.provider);
-      setLlmModel(statusRes.llm.model);
-    }
-    if (simRes && typeof simRes.remaining === "number") {
-      setPendingRemaining(simRes.remaining);
-    }
     if (walletRes?.wallet) setWallet(walletRes.wallet);
     setSelectedId((prev) => {
       if (prev) return prev;
@@ -198,23 +183,10 @@ export function Cockpit() {
     };
   }, []);
 
-  // Seeded demo queue: every ~28s, ask the server to dequeue the next pending
-  // inbound. The new message gets picked up by the messages poll above.
-  useEffect(() => {
-    const tick = async () => {
-      try {
-        const r = await fetch("/api/simulate/next", { method: "POST" });
-        const data = await r.json();
-        if (typeof data.remaining === "number") {
-          setPendingRemaining(data.remaining);
-        }
-      } catch {
-        // ignore
-      }
-    };
-    const id = setInterval(tick, SIMULATE_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, []);
+  // Demo-queue simulator is intentionally disabled — real inbound arrives
+  // via the AgentMail/AgentPhone webhooks during a live demo. The endpoint
+  // still exists for ad-hoc testing.
+  // useEffect(() => { ... setInterval(.../api/simulate/next, 28s) ... }, []);
 
   const selected = useMemo(
     () => messages.find((m) => m.id === selectedId) ?? null,
@@ -332,39 +304,11 @@ export function Cockpit() {
     setPipelineStep("idle");
   };
 
-  const reseed = async () => {
-    await fetch("/api/seed", { method: "POST" });
-    setActiveResult(null);
-    setPipelineStep("idle");
-    setSelectedId(null);
-    setArrivalIds(new Set());
-    setJustArrived(null);
-    await fetchAll();
-  };
-
-  const updatePolicies = async (next: Policies) => {
-    setPolicies(next);
-    await fetch("/api/policies", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(next),
-    });
-  };
-
   const stats = useMemo(() => computeStats(actions), [actions]);
 
   return (
     <div className="space-y-6">
-      <TopBar
-        managerName={managerName}
-        setManagerName={setManagerName}
-        llmProvider={llmProvider}
-        llmModel={llmModel}
-        pendingRemaining={pendingRemaining}
-        onReset={reseed}
-      />
-
-      <Hero managerName={managerName} />
+      <Hero businessName={businessName} />
 
       <JustArrivedToast item={justArrived} onDismiss={() => setJustArrived(null)} />
 
@@ -396,9 +340,11 @@ export function Cockpit() {
 
         <section className="lg:col-span-3 space-y-5">
           <WalletCard wallet={wallet} flash={walletFlash} />
-          {policies && (
-            <PoliciesCard policies={policies} onChange={updatePolicies} />
-          )}
+          <BusinessIdentityCard
+            businessName={businessName}
+            onChange={setBusinessName}
+            policies={policies}
+          />
         </section>
       </div>
 
@@ -414,89 +360,14 @@ export function Cockpit() {
   );
 }
 
-function TopBar({
-  managerName,
-  setManagerName,
-  llmProvider,
-  llmModel,
-  pendingRemaining,
-  onReset,
-}: {
-  managerName: string;
-  setManagerName: (n: string) => void;
-  llmProvider: string | null;
-  llmModel: string | null;
-  pendingRemaining: number;
-  onReset: () => void;
-}) {
-  const liveLlm = !!llmProvider;
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-ink-800/80 bg-ink-900/40 px-5 py-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex flex-col">
-          <label className="text-[10px] uppercase tracking-wider text-ink-500">
-            AI Manager name
-          </label>
-          <input
-            value={managerName}
-            onChange={(e) => setManagerName(e.target.value.slice(0, 24))}
-            placeholder="Name your AI Manager"
-            className="mt-0.5 w-44 rounded-md border border-ink-700 bg-ink-950 px-2 py-1 text-sm text-ink-100 focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
-          />
-        </div>
-        <div className="hidden h-10 w-px bg-ink-800 sm:block" />
-        <div className="hidden sm:block">
-          <div className="text-[10px] uppercase tracking-wider text-ink-500">
-            Business
-          </div>
-          <div className="text-sm font-medium text-ink-100">
-            {demoBusiness.name}
-          </div>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <span
-          className={clsx(
-            "pill",
-            liveLlm
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-              : "border-ink-600 bg-ink-800 text-ink-200",
-          )}
-          title={liveLlm ? "LLM key detected" : "No LLM key — deterministic engine"}
-        >
-          <span
-            className={clsx(
-              "h-1.5 w-1.5 rounded-full",
-              liveLlm ? "bg-emerald-400" : "bg-ink-500",
-            )}
-          />
-          {liveLlm
-            ? `${llmProvider}${llmModel ? ` · ${llmModel}` : ""}`
-            : "Demo mode · deterministic"}
-        </span>
-        {pendingRemaining > 0 && (
-          <span
-            className="pill border-accent/40 bg-accent/10 text-accent"
-            title="Queued inbound that will arrive live during the demo"
-          >
-            <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-            {pendingRemaining} arriving live
-          </span>
-        )}
-        <button onClick={onReset} className="btn">
-          Reset demo
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function Hero({ managerName }: { managerName: string }) {
+function Hero({ businessName }: { businessName: string }) {
+  const headline = businessName
+    ? `Opelo is running operations for ${businessName}.`
+    : "Opelo is running your operations.";
   return (
     <div className="rounded-2xl border border-ink-800/80 bg-gradient-to-br from-ink-900 to-ink-950 px-6 py-6">
       <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-        {managerName} is running your operations.
+        {headline}
       </h1>
       <p className="mt-1.5 max-w-2xl text-sm text-ink-300">
         Refunds, pricing exceptions, sponsorships, scheduling, and escalations
@@ -848,9 +719,7 @@ function buildTimelineSteps(
     }
     case "meeting_booked": {
       const channelLabel =
-        channel === "phone_transcript"
-          ? "Call transcript received"
-          : channelReceived;
+        channel === "phone_transcript" ? "Call transcribed" : channelReceived;
       return [
         { id: "received", label: channelLabel },
         { id: "policy", label: "Lead qualified" },
@@ -892,7 +761,7 @@ function replySentLabel(channel: Channel): string {
     case "sms":
       return "SMS reply sent";
     case "phone_transcript":
-      return "SMS follow-up sent";
+      return "Follow-up SMS sent";
     case "social_dm":
       return "DM reply queued";
     case "email":
@@ -908,7 +777,7 @@ function channelReceivedLabel(channel: Channel): string {
     case "sms":
       return "SMS received";
     case "phone_transcript":
-      return "Phone call transcribed";
+      return "Call transcribed";
     case "social_dm":
       return "Instagram DM received";
     default:
@@ -967,26 +836,44 @@ function ResultPanel({
 
       <div className="rounded-xl border border-ink-800 bg-ink-950/40 p-3">
         <div className="label mb-2">Actions taken</div>
-        <ul className="space-y-1.5">
+        <ul className="space-y-2">
           {result.mock_external_actions.map((act, i) => (
             <li
               key={act.ref + i}
-              className="flex items-center gap-2 text-xs text-ink-200"
+              className={clsx(
+                "rounded-md border px-2 py-1.5 text-xs",
+                act.ok
+                  ? "border-ink-800 bg-ink-950/40 text-ink-200"
+                  : "border-rose-500/40 bg-rose-500/10 text-rose-100",
+              )}
             >
-              <span
-                className={clsx(
-                  "inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px]",
-                  act.ok
-                    ? "bg-emerald-500/15 text-emerald-300"
-                    : "bg-rose-500/15 text-rose-300",
-                )}
-              >
-                {act.ok ? "✓" : "✕"}
-              </span>
-              <span className="text-ink-100">{humanizeAction(act.name)}</span>
-              <span className="ml-auto font-mono text-[10px] text-ink-500">
-                {act.ref}
-              </span>
+              <div className="flex items-center gap-2">
+                <span
+                  className={clsx(
+                    "inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px]",
+                    act.ok
+                      ? "bg-emerald-500/15 text-emerald-300"
+                      : "bg-rose-500/20 text-rose-200",
+                  )}
+                >
+                  {act.ok ? "✓" : "✕"}
+                </span>
+                <span
+                  className={clsx(
+                    act.ok ? "text-ink-100" : "font-medium text-rose-100",
+                  )}
+                >
+                  {humanizeAction(act.name)}
+                </span>
+                <span className="ml-auto font-mono text-[10px] text-ink-500">
+                  {act.ref}
+                </span>
+              </div>
+              {act.detail && (!act.ok || /failed|skipped/i.test(act.name)) && (
+                <div className="mt-1 pl-6 text-[11px] leading-snug text-rose-200/90">
+                  {act.detail}
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -1133,135 +1020,56 @@ function WalletRow({
   );
 }
 
-function PoliciesCard({
-  policies,
+function BusinessIdentityCard({
+  businessName,
   onChange,
+  policies,
 }: {
-  policies: Policies;
-  onChange: (next: Policies) => void;
+  businessName: string;
+  onChange: (next: string) => void;
+  policies: Policies | null;
 }) {
-  const updateNumber =
-    (key: keyof Policies) => (e: React.ChangeEvent<HTMLInputElement>) => {
-      const v = Number(e.target.value);
-      if (!Number.isFinite(v)) return;
-      onChange({ ...policies, [key]: v });
-    };
-
   return (
     <div className="card">
       <div className="border-b border-ink-800/80 px-5 py-3">
         <h2 className="text-sm font-semibold tracking-wide text-ink-100">
-          Business policies
+          Your business
         </h2>
       </div>
-      <ul className="divide-y divide-ink-800/60">
-        <PolicyRow
-          label="Refunds under"
-          value={`$${policies.refund_auto_approve_under}`}
-          trail="auto-approved"
-        >
-          <NumberInline
-            value={policies.refund_auto_approve_under}
-            onChange={updateNumber("refund_auto_approve_under")}
-          />
-        </PolicyRow>
-        <PolicyRow
-          label="Sponsorship floor"
-          value={`$${policies.min_sponsorship_price.toLocaleString()}`}
-        >
-          <NumberInline
-            value={policies.min_sponsorship_price}
-            onChange={updateNumber("min_sponsorship_price")}
-          />
-        </PolicyRow>
-        <PolicyRow
-          label="Consulting floor"
-          value={`$${policies.min_project_price.toLocaleString()}`}
-        >
-          <NumberInline
-            value={policies.min_project_price}
-            onChange={updateNumber("min_project_price")}
-          />
-        </PolicyRow>
-        <PolicyRow
-          label="Leads over"
-          value={`$${policies.auto_book_lead_above.toLocaleString()}`}
-          trail="auto-booked"
-        >
-          <NumberInline
-            value={policies.auto_book_lead_above}
-            onChange={updateNumber("auto_book_lead_above")}
-          />
-        </PolicyRow>
-        <li className="px-5 py-3 text-xs text-ink-300">
-          <span className="text-ink-400">Angry customers</span> · always escalate
-        </li>
-      </ul>
-    </div>
-  );
-}
-
-function PolicyRow({
-  label,
-  value,
-  trail,
-  children,
-}: {
-  label: string;
-  value: string;
-  trail?: string;
-  children: React.ReactNode;
-}) {
-  const [editing, setEditing] = useState(false);
-  return (
-    <li className="px-5 py-3 text-sm">
-      <div className="flex flex-col gap-1">
-        <span className="text-xs text-ink-400">{label}</span>
-        {editing ? (
-          <div className="flex items-center gap-2">
-            {children}
-            <button
-              className="text-xs text-accent hover:underline"
-              onClick={() => setEditing(false)}
-            >
-              Done
-            </button>
-          </div>
-        ) : (
-          <button
-            className="text-left text-sm font-medium text-ink-100 hover:text-accent"
-            onClick={() => setEditing(true)}
-            title="Click to edit"
+      <div className="space-y-4 px-5 py-4">
+        <div>
+          <label
+            htmlFor="opelo-business-name"
+            className="text-[10px] uppercase tracking-wider text-ink-500"
           >
-            {value}
-            {trail && (
-              <span className="ml-1 text-xs font-normal text-ink-400">
-                {trail}
-              </span>
-            )}
-          </button>
+            Freelancer or company name
+          </label>
+          <input
+            id="opelo-business-name"
+            value={businessName}
+            onChange={(e) => onChange(e.target.value.slice(0, 80))}
+            placeholder="your name or company"
+            className="mt-2 w-full rounded-md border border-ink-700 bg-ink-950 px-3 py-2 text-sm placeholder:text-ink-500 focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20"
+          />
+          <p className="mt-2 text-[11px] text-ink-500">
+            Opelo uses this as context when responding on your behalf.
+          </p>
+        </div>
+        {policies && (
+          <div className="rounded-md border border-ink-800 bg-ink-950/40 px-3 py-2.5">
+            <div className="text-[10px] uppercase tracking-wider text-ink-500">
+              Auto-rules
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-ink-400">
+              Refunds &lt;${policies.refund_auto_approve_under} auto-approved ·
+              Sponsor floor ${policies.min_sponsorship_price.toLocaleString()} ·
+              Consulting floor ${policies.min_project_price.toLocaleString()} ·
+              Leads ${policies.auto_book_lead_above.toLocaleString()}+
+              auto-booked
+            </p>
+          </div>
         )}
       </div>
-    </li>
-  );
-}
-
-function NumberInline({
-  value,
-  onChange,
-}: {
-  value: number;
-  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-}) {
-  return (
-    <div className="flex items-center gap-1">
-      <span className="text-xs text-ink-500">$</span>
-      <input
-        type="number"
-        value={value}
-        onChange={onChange}
-        className="w-24 rounded-md border border-ink-700 bg-ink-950 px-2 py-1 text-right text-sm"
-      />
     </div>
   );
 }
