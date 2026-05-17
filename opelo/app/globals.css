@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: #0a0a0b;
+  color: #ebebef;
+  min-height: 100%;
+}
+
+body {
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(249, 115, 22, 0.35);
+  color: white;
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-ink-700 bg-ink-900/80 shadow-card backdrop-blur-sm;
+  }
+  .card-tight {
+    @apply card p-5;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-ink-700 bg-ink-800 px-3.5 py-2 text-sm font-medium text-ink-100 transition hover:border-ink-600 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-accent/40 bg-accent px-3.5 py-2 text-sm font-semibold text-ink-950 shadow-glow transition hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .label {
+    @apply text-xs font-medium uppercase tracking-wider text-ink-400;
+  }
+  .kbd {
+    @apply rounded border border-ink-700 bg-ink-800 px-1.5 py-0.5 font-mono text-[10px] text-ink-300;
+  }
+  .grid-bg {
+    background-image:
+      radial-gradient(circle at 50% 0%, rgba(249, 115, 22, 0.08), transparent 60%),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.02), transparent 30%);
+  }
+  .field {
+    @apply w-full rounded-lg border border-ink-700 bg-ink-900 px-3 py-2 text-sm text-ink-100 placeholder:text-ink-500 focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/20;
+  }
+}
+
+.shine {
+  position: relative;
+  overflow: hidden;
+}
+.shine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.08) 50%,
+    transparent 70%
+  );
+  transform: translateX(-100%);
+  animation: shine 3.5s ease-in-out infinite;
+}
+@keyframes shine {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.pulse-dot {
+  position: relative;
+}
+.pulse-dot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.5;
+  animation: pulseRing 2s ease-out infinite;
+}
+@keyframes pulseRing {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
