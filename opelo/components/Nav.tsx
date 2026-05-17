@@ -1,41 +1,50 @@
+"use client";
+
 import Link from "next/link";
+import { OpeloWordmark } from "@/components/OpeloWordmark";
 
 export function Nav() {
   return (
-    <header className="sticky top-0 z-30 border-b border-ink-800/60 bg-ink-950/85 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-6">
-        <Link href="/" className="flex items-center gap-2.5">
-          <Logo />
-          <span className="text-base font-semibold tracking-tight">Opelo</span>
-          <span className="hidden text-xs text-ink-500 sm:inline">
-            AI middle management for one-person businesses
-          </span>
+    <header
+      className="sticky top-0 z-30"
+      style={{
+        background: "rgba(255,255,255,0.55)",
+        backdropFilter: "blur(16px) saturate(180%)",
+        WebkitBackdropFilter: "blur(16px) saturate(180%)",
+        borderBottom: "1px solid rgba(255,255,255,0.4)",
+        boxShadow: "0 1px 24px rgba(0,0,0,0.04)",
+      }}
+    >
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
+        {/* Logo */}
+        <Link href="/" className="shrink-0">
+          <OpeloWordmark />
         </Link>
-        <span className="text-[11px] uppercase tracking-wider text-ink-500">
-          Cockpit
-        </span>
+
+        {/* Nav links */}
+        <nav className="hidden items-center gap-8 md:flex">
+          <Link href="/#features" className="text-sm text-stone-500 transition hover:text-stone-900">
+            Features
+          </Link>
+          <Link href="/pricing" className="text-sm text-stone-500 transition hover:text-stone-900">
+            Pricing
+          </Link>
+          <Link href="/company" className="text-sm text-stone-500 transition hover:text-stone-900">
+            Company
+          </Link>
+        </nav>
+
+        {/* CTA */}
+        <Link
+          href="/inbox"
+          className="rounded-full px-5 py-2 text-sm font-semibold text-white transition"
+          style={{ background: "#030303" }}
+          onMouseEnter={(e) => (e.currentTarget.style.background = "#1a1a1a")}
+          onMouseLeave={(e) => (e.currentTarget.style.background = "#030303")}
+        >
+          Try Opelo
+        </Link>
       </div>
     </header>
-  );
-}
-
-function Logo() {
-  return (
-    <span className="grid h-7 w-7 place-items-center rounded-md bg-gradient-to-br from-accent to-accent-soft text-ink-950 shadow-glow">
-      <svg
-        viewBox="0 0 24 24"
-        width="14"
-        height="14"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M4 12c0-4 3-8 8-8s8 4 8 8" />
-        <path d="M4 12c0 4 3 8 8 8" />
-        <path d="M12 12h8" />
-      </svg>
-    </span>
   );
 }

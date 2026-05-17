@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(echo \"Started dev server in background with PID $!\")",
+      "Bash(echo \"PID: $!\")",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(grep -A5 \"Error:$\")",
+      "Bash(cp /Users/preciousjohnsoninyang/Downloads/yc-upstream/opelo/lib/ai/gemini.ts /Users/preciousjohnsoninyang/Downloads/yc-main/opelo/lib/ai/gemini.ts)",
+      "Bash(cp /Users/preciousjohnsoninyang/Downloads/yc-upstream/opelo/lib/integrations/supermemory.ts /Users/preciousjohnsoninyang/Downloads/yc-main/opelo/lib/integrations/supermemory.ts)",
+      "Bash(cp /Users/preciousjohnsoninyang/Downloads/yc-upstream/opelo/lib/integrations/agentmail_ingest.ts /Users/preciousjohnsoninyang/Downloads/yc-main/opelo/lib/integrations/agentmail_ingest.ts)",
+      "Bash(cp /Users/preciousjohnsoninyang/Downloads/yc-upstream/opelo/lib/integrations/agentphone_ingest.ts /Users/preciousjohnsoninyang/Downloads/yc-main/opelo/lib/integrations/agentphone_ingest.ts)",
+      "Bash(cp /Users/preciousjohnsoninyang/Downloads/yc-upstream/opelo/lib/types.ts /Users/preciousjohnsoninyang/Downloads/yc-main/opelo/lib/types.ts)",
+      "Bash(cp /Users/preciousjohnsoninyang/Downloads/yc-upstream/opelo/lib/business.ts /Users/preciousjohnsoninyang/Downloads/yc-main/opelo/lib/business.ts)",
+      "Bash(sed -i '' 's/managerName: \"Maya\"/managerName: \"Opelo\"/g' /Users/preciousjohnsoninyang/Downloads/yc-main/opelo/lib/business.ts)",
+      "Bash(sed -i '' 's/DEFAULT_MANAGER_NAME = \"Maya\"/DEFAULT_MANAGER_NAME = \"Opelo\"/g' /Users/preciousjohnsoninyang/Downloads/yc-main/opelo/lib/business.ts)",
+      "Bash(cp /Users/preciousjohnsoninyang/Downloads/yc-upstream/opelo/lib/ai/llm.ts /Users/preciousjohnsoninyang/Downloads/yc-main/opelo/lib/ai/llm.ts)",
+      "Bash(sed -i '' 's/manager_name ?? \"Maya\"/manager_name ?? \"Opelo\"/g' /Users/preciousjohnsoninyang/Downloads/yc-main/opelo/lib/ai/llm.ts)",
+      "Bash(node -e ' *)",
+      "Bash(curl -s http://localhost:3000/api/status)",
+      "Bash(curl -s -X POST http://localhost:3000/api/onboard -H 'Content-Type: application/json' -d '{\"description\":\"I run a coffee shop. Approve refunds under $50, book meetings with leads above $1k\"}')"
+    ]
+  }
+}
