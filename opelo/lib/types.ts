@@ -46,6 +46,8 @@ export interface InboundMessage {
   received_at: string;
   status: MessageStatus;
   amount_hint?: number | null;
+  source_id?: string;
+  thread_id?: string;
 }
 
 export interface Policies {
@@ -86,6 +88,7 @@ export interface ActionRecord {
   classification: Classification;
   decision: Decision;
   policy_applied: string;
+  reasoning_summary: string;
   customer_response: string;
   owner_summary: string;
   action_type: ActionType;

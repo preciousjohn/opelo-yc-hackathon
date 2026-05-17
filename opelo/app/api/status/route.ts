@@ -47,22 +47,28 @@ export async function GET() {
       "AGENTPHONE_BASE_URL",
     ]),
     check("agentmail", "AgentMail — email replies", ["AGENTMAIL_API_KEY"]),
+    check("supermemory", "Supermemory — company memory", [
+      "SUPERMEMORY_API_KEY",
+    ]),
     check("calendar", "Google Calendar — bookings", ["GOOGLE_CALENDAR_ID"]),
   ];
 
+  const llmExpected = [
+    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+  ];
   const llm = {
     key: "llm",
-    label: "LLM — copy enhancement",
+    label: "LLM — decision drafting",
     mode: provider ? "live" : "mock",
     provider,
     model,
-    expects: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
-    present: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"].filter(
-      (v) => !!process.env[v],
-    ),
+    expects: llmExpected,
+    present: llmExpected.filter((v) => !!process.env[v]),
     note: provider
-      ? `Using ${provider} (${model}). Replies are LLM-drafted.`
-      : "No LLM key detected — using deterministic copy.",
+      ? `Using ${provider} (${model}).`
+      : "No LLM key detected — using deterministic engine.",
   };
 
   return NextResponse.json({

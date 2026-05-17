@@ -21,10 +21,15 @@ import {
   toMockExternalAction as agentphoneAction,
 } from "../integrations/agentphone";
 import { calendar } from "../integrations/calendar";
+import {
+  saveDecision as supermemorySaveDecision,
+  toMockExternalAction as supermemoryAction,
+} from "../integrations/supermemory";
 import { demoBusiness } from "../business";
 
 export interface ProcessOptions {
   useLLM?: boolean;
+  managerName?: string;
 }
 
 interface DecisionPlan {
@@ -76,12 +81,17 @@ export async function processInboundMessage(
       message_body: message.body,
       next_slot_label:
         plan.decision === "schedule" ? calendar.nextSlotLabel() : undefined,
+      manager_name: options.managerName,
     });
     if (enhanced) {
       llm_used = true;
       if (enhanced.reasoning_summary) reasoning_summary = enhanced.reasoning_summary;
       if (enhanced.customer_response) customer_response = enhanced.customer_response;
       if (enhanced.owner_summary) owner_summary = enhanced.owner_summary;
+      // Trust Gemini's policy label if provided.
+      if (enhanced.refined_policy_applied) {
+        plan.policy_applied = enhanced.refined_policy_applied;
+      }
     }
   }
 
@@ -382,6 +392,20 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
       ),
     );
   }
+
+  const memResp = await supermemorySaveDecision({
+    customerId: customer.id,
+    classification: args.plan.action_type,
+    decision: args.plan.decision,
+    policyApplied: args.plan.policy_applied,
+    ownerSummary: owner_summary,
+  });
+  actions.push(
+    supermemoryAction(
+      memResp,
+      `Saved decision to ${demoBusiness.name} memory.`,
+    ),
+  );
 
   return actions;
 }

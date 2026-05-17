@@ -6,6 +6,7 @@ export interface BusinessOffering {
 export interface BusinessProfile {
   name: string;
   ownerName: string;
+  managerName: string;
   phone: string;
   offerings: BusinessOffering[];
 }
@@ -13,6 +14,7 @@ export interface BusinessProfile {
 export const demoBusiness: BusinessProfile = {
   name: "Opelo Demo Studio",
   ownerName: "Demo Owner",
+  managerName: "Maya",
   phone: process.env.OWNER_PHONE_NUMBER || "+15555550123",
   offerings: [
     { name: "Creator Course", priceCents: 8200 },
@@ -20,3 +22,5 @@ export const demoBusiness: BusinessProfile = {
     { name: "AI Workflow Implementation", priceCents: 800000 },
   ],
 };
+
+export const DEFAULT_MANAGER_NAME = "Maya";

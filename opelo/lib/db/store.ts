@@ -7,7 +7,13 @@ import {
   OwnerSummary,
   Policies,
 } from "../types";
-import { defaultPolicies, seedCustomers, seedMessages } from "./seed";
+import {
+  defaultPolicies,
+  seedActions,
+  seedCustomers,
+  seedMessages,
+  seedPendingInbound,
+} from "./seed";
 
 const DATA_DIR = path.join(process.cwd(), ".opelo-data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
@@ -18,6 +24,7 @@ interface Snapshot {
   messages: InboundMessage[];
   actions: ActionRecord[];
   owner_summaries: OwnerSummary[];
+  pending_inbound: InboundMessage[];
 }
 
 let cache: Snapshot | null = null;
@@ -28,8 +35,9 @@ function initial(): Snapshot {
     policies: defaultPolicies(),
     customers: seedCustomers(),
     messages: seedMessages(),
-    actions: [],
+    actions: seedActions(),
     owner_summaries: [],
+    pending_inbound: seedPendingInbound(),
   };
 }
 
@@ -46,8 +54,8 @@ async function readSnapshot(): Promise<Snapshot> {
   try {
     const raw = await fs.readFile(DATA_FILE, "utf8");
     cache = JSON.parse(raw) as Snapshot;
-    // hydrate any new fields if seed expanded later
     if (!cache.owner_summaries) cache.owner_summaries = [];
+    if (!cache.pending_inbound) cache.pending_inbound = seedPendingInbound();
     return cache;
   } catch {
     cache = initial();
@@ -116,6 +124,24 @@ export const store = {
     const snap = await readSnapshot();
     return snap.messages.find((m) => m.id === id);
   },
+  async addMessage(
+    message: InboundMessage,
+  ): Promise<{ inserted: boolean; message: InboundMessage }> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      const dupById = snap.messages.find((m) => m.id === message.id);
+      if (dupById) return { inserted: false, message: dupById };
+      if (message.source_id) {
+        const dupBySource = snap.messages.find(
+          (m) => m.source_id === message.source_id,
+        );
+        if (dupBySource) return { inserted: false, message: dupBySource };
+      }
+      snap.messages.push(message);
+      await persist();
+      return { inserted: true, message };
+    });
+  },
   async updateMessageStatus(
     id: string,
     status: InboundMessage["status"],
@@ -152,6 +178,22 @@ export const store = {
   async listOwnerSummaries(): Promise<OwnerSummary[]> {
     const snap = await readSnapshot();
     return snap.owner_summaries;
+  },
+  async dequeueNextPending(): Promise<InboundMessage | null> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      const next = snap.pending_inbound.shift();
+      if (!next) return null;
+      next.received_at = new Date().toISOString();
+      next.status = "new";
+      snap.messages.push(next);
+      await persist();
+      return next;
+    });
+  },
+  async pendingInboundCount(): Promise<number> {
+    const snap = await readSnapshot();
+    return snap.pending_inbound.length;
   },
   async reset(): Promise<void> {
     return withLock(async () => {

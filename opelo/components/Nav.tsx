@@ -1,50 +1,19 @@
-"use client";
-
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import clsx from "clsx";
-
-const links = [
-  { href: "/", label: "Home" },
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/inbox", label: "Inbox" },
-  { href: "/policies", label: "Policies" },
-  { href: "/logs", label: "Logs" },
-];
 
 export function Nav() {
-  const pathname = usePathname();
   return (
-    <header className="sticky top-0 z-30 border-b border-ink-800/80 bg-ink-950/80 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
-        <Link href="/" className="flex items-center gap-2">
+    <header className="sticky top-0 z-30 border-b border-ink-800/60 bg-ink-950/85 backdrop-blur">
+      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-6">
+        <Link href="/" className="flex items-center gap-2.5">
           <Logo />
-          <span className="text-sm font-semibold tracking-tight">Opelo</span>
+          <span className="text-base font-semibold tracking-tight">Opelo</span>
           <span className="hidden text-xs text-ink-500 sm:inline">
-            AI middle management
+            AI middle management for one-person businesses
           </span>
         </Link>
-        <nav className="flex items-center gap-1">
-          {links.map((l) => {
-            const active =
-              pathname === l.href ||
-              (l.href !== "/" && pathname?.startsWith(l.href));
-            return (
-              <Link
-                key={l.href}
-                href={l.href}
-                className={clsx(
-                  "rounded-md px-3 py-1.5 text-sm transition",
-                  active
-                    ? "bg-ink-800 text-white"
-                    : "text-ink-300 hover:bg-ink-800/70 hover:text-white",
-                )}
-              >
-                {l.label}
-              </Link>
-            );
-          })}
-        </nav>
+        <span className="text-[11px] uppercase tracking-wider text-ink-500">
+          Cockpit
+        </span>
       </div>
     </header>
   );

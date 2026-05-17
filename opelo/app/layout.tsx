@@ -16,11 +16,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen bg-ink-950 text-ink-100">
-        <div className="grid-bg min-h-screen">
+        <div className="min-h-screen">
           <Nav />
-          <main className="mx-auto max-w-6xl px-6 pb-24 pt-8">{children}</main>
-          <footer className="border-t border-ink-800/80 py-6 text-center text-xs text-ink-500">
-            Opelo · AI middle management for one-person businesses · demo build
+          <main className="mx-auto max-w-7xl px-6 pb-16 pt-6">{children}</main>
+          <footer className="border-t border-ink-800/60 py-5 text-center text-xs text-ink-500">
+            Opelo · AI middle management for one-person businesses · demo mode
           </footer>
         </div>
       </body>

@@ -12,6 +12,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const messageId: string | undefined = body.message_id;
     const useLLM: boolean = body.use_llm !== false;
+    const managerName: string | undefined =
+      typeof body.manager_name === "string" ? body.manager_name : undefined;
 
     if (!messageId) {
       return NextResponse.json(
@@ -36,6 +38,7 @@ export async function POST(req: NextRequest) {
     await store.updateMessageStatus(messageId, "processing");
     const result = await processInboundMessage(message, policies, customer, {
       useLLM,
+      managerName,
     });
 
     const record: ActionRecord = {
@@ -45,6 +48,7 @@ export async function POST(req: NextRequest) {
       classification: result.classification,
       decision: result.decision,
       policy_applied: result.policy_applied,
+      reasoning_summary: result.reasoning_summary,
       customer_response: result.customer_response,
       owner_summary: result.owner_summary,
       action_type: result.action_type,
