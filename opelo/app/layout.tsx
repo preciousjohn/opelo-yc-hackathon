@@ -8,6 +8,9 @@ const instrumentSans = Instrument_Sans({ subsets: ["latin"], weight: ["400", "50
 export const metadata: Metadata = {
   title: "Opelo — AI middle management for one-person businesses",
   description: "Delegate refunds, pricing exceptions, sponsorships, scheduling, and escalations to an AI manager that follows your business policies.",
+  icons: {
+    icon: "/favicon.png",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
