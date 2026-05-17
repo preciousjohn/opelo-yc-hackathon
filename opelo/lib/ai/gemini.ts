@@ -13,6 +13,7 @@ export interface GeminiInput {
   next_slot_label?: string;
   business_name: string;
   owner_name: string;
+  customer_history?: string[];
 }
 
 export interface GeminiDecisionResponse {
@@ -112,6 +113,9 @@ Inbound message:
 """
 ${input.message_body}
 """
+${input.customer_history?.length
+  ? `\nCustomer history (last ${input.customer_history.length} interactions):\n${input.customer_history.join("\n")}`
+  : ""}
 
 Return ONLY a JSON object matching this exact schema:
 {

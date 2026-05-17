@@ -23,6 +23,7 @@ export interface LlmInput {
   message_body: string;
   next_slot_label?: string;
   manager_name?: string;
+  customer_history?: string[];
 }
 
 export type LlmProvider = "gemini" | "openai" | "anthropic" | null;
@@ -81,6 +82,7 @@ export async function enhanceWithLLM(
         next_slot_label: input.next_slot_label,
         business_name: demoBusiness.name,
         owner_name: demoBusiness.ownerName,
+        customer_history: input.customer_history,
       });
       if (!resp) return null;
       return {
@@ -166,6 +168,9 @@ Inbound message:
 """
 ${input.message_body}
 """
+${input.customer_history?.length
+  ? `\nCustomer history (last ${input.customer_history.length} interactions):\n${input.customer_history.join("\n")}`
+  : ""}
 
 Return ONLY a JSON object with keys: reasoning_summary, customer_response, owner_summary. No prose outside JSON. reasoning_summary is one short business sentence, not chain-of-thought.`;
 }

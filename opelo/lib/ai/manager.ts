@@ -25,6 +25,7 @@ import { nanoid } from "../integrations/util";
 import { calendar } from "../integrations/calendar";
 import {
   saveDecision as supermemorySaveDecision,
+  searchMemory,
   toMockExternalAction as supermemoryAction,
 } from "../integrations/supermemory";
 import { businessSignature, demoBusiness } from "../business";
@@ -62,6 +63,9 @@ export async function processInboundMessage(
   customer: Customer,
   options: ProcessOptions = {},
 ): Promise<ProcessResult> {
+  const memoryResult = await searchMemory(customer.id);
+  const customerHistory = memoryResult.data.matches;
+
   const hints = classifyHeuristic(message, policies);
   const classification: Classification = hints.classification;
   const isVip =
@@ -95,6 +99,7 @@ export async function processInboundMessage(
       next_slot_label:
         plan.decision === "schedule" ? calendar.nextSlotLabel() : undefined,
       manager_name: options.managerName,
+      customer_history: customerHistory,
     });
     if (enhanced) {
       llm_used = true;
