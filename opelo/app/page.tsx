@@ -1,29 +1,30 @@
 import Link from "next/link";
+import { demoBusiness } from "@/lib/business";
 
 const capabilities = [
   {
-    title: "Refunds",
-    body: "Approves clean refunds under your threshold via Stripe. Escalates abuse and VIPs to you.",
+    title: "Refunds via Sponge",
+    body: "Approves clean refunds under your threshold through Sponge. Escalates abuse and VIPs to you.",
   },
   {
     title: "Pricing exceptions",
-    body: "Holds your floor on consulting. Offers a smaller scope instead of discounting.",
+    body: "Holds your floor on consulting. Issues a Sponge payment link for a smaller scope instead of discounting.",
   },
   {
     title: "Sponsorships",
-    body: "Counter-offers below-floor brand deals. Accepts and books the ones that clear.",
+    body: "Counter-offers below-floor brand deals at your floor with a Sponge payment link attached.",
   },
   {
     title: "Qualified leads",
-    body: "Books high-budget leads onto your calendar automatically. Sends slots to the rest.",
+    body: "Books high-budget leads (phone, email, DM) onto your calendar automatically.",
   },
   {
-    title: "Scheduling",
-    body: "Replies with your standing availability and confirms the slot.",
+    title: "Multi-channel intake",
+    body: "Listens across email, SMS, AgentPhone call transcripts, and social DMs — one inbox.",
   },
   {
-    title: "Escalations",
-    body: "Detects angry or repeated complaints, holds back the auto-reply, and texts you.",
+    title: "Owner updates via AgentPhone",
+    body: "Detects escalations and texts you in real time through AgentPhone so nothing slips.",
   },
 ];
 
@@ -35,7 +36,7 @@ export default function HomePage() {
         <div className="flex flex-col items-center text-center">
           <span className="pill border-accent/30 bg-accent/10 text-accent">
             <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-            Demo running in mock mode
+            {demoBusiness.name} · demo running in mock mode
           </span>
           <h1 className="mt-6 text-5xl font-semibold tracking-tight sm:text-6xl">
             AI middle management for{" "}
@@ -61,7 +62,7 @@ export default function HomePage() {
             </Link>
           </div>
           <div className="mt-3 text-xs text-ink-500">
-            No API keys required · Stripe / AgentMail / Twilio / Calendar in mock mode
+            No login. No API keys required. Sponge · AgentPhone · AgentMail · Calendar run in mock mode by default.
           </div>
         </div>
       </section>

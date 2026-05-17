@@ -2,14 +2,17 @@ import Link from "next/link";
 import { store } from "@/lib/db/store";
 import {
   ActionRecord,
+  Channel,
   Customer,
   InboundMessage,
 } from "@/lib/types";
 import {
+  ChannelBadge,
   ClassificationBadge,
   DecisionBadge,
   StatusPill,
 } from "@/components/Badges";
+import { demoBusiness } from "@/lib/business";
 
 export const dynamic = "force-dynamic";
 
@@ -22,12 +25,14 @@ export default async function DashboardPage() {
   const stats = computeStats(actions);
   const recentMessages = messages.slice(0, 5);
   const recentActions = actions.slice(0, 6);
+  const byChannel = countByChannel(messages);
+  const externalActionRollup = rollupExternalActions(actions);
 
   return (
     <div className="space-y-8">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <div className="label">Owner dashboard</div>
+          <div className="label">Owner dashboard · {demoBusiness.name}</div>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">
             What your AI manager did this week
           </h1>
@@ -52,7 +57,7 @@ export default async function DashboardPage() {
           hint={`Refunds: $${stats.refundsTotal.toFixed(0)} · New: $${stats.revenueGenerated.toFixed(0)}`}
         />
         <Stat
-          label="Refunds approved / rejected"
+          label="Refunds via Sponge (approved / held)"
           value={`${stats.refundsApproved} / ${stats.refundsEscalated}`}
           tone="rose"
           hint="Auto-approved vs. owner-reviewed"
@@ -64,11 +69,66 @@ export default async function DashboardPage() {
           hint="From qualified leads + scheduling"
         />
         <Stat
-          label="Escalations"
+          label="Owner updates via AgentPhone"
           value={String(stats.escalations)}
           tone="amber"
-          hint="Sent to your phone via SMS"
+          hint="SMS sent to your phone"
         />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="card">
+          <div className="border-b border-ink-800 px-5 py-3 flex items-center justify-between">
+            <div className="label">Inbound by channel</div>
+            <span className="text-xs text-ink-500">last {messages.length}</span>
+          </div>
+          <ul className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-3">
+            {(Object.keys(byChannel) as Channel[]).map((ch) => (
+              <li
+                key={ch}
+                className="rounded-lg border border-ink-800 bg-ink-950/40 p-3"
+              >
+                <div className="flex items-center justify-between">
+                  <ChannelBadge value={ch} />
+                  <span className="text-lg font-semibold text-ink-100">
+                    {byChannel[ch]}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="card">
+          <div className="border-b border-ink-800 px-5 py-3">
+            <div className="label">External actions executed</div>
+          </div>
+          <ul className="divide-y divide-ink-800/80">
+            {externalActionRollup.length === 0 && (
+              <li className="px-5 py-4 text-sm text-ink-400">
+                Nothing yet — run a message to populate.
+              </li>
+            )}
+            {externalActionRollup.map((row) => (
+              <li
+                key={row.name}
+                className="flex items-center justify-between px-5 py-3"
+              >
+                <div className="min-w-0">
+                  <div className="font-mono text-xs text-ink-100">
+                    {row.name}
+                  </div>
+                  <div className="text-xs text-ink-500">
+                    {row.providerLabel}
+                  </div>
+                </div>
+                <span className="pill border-ink-600 bg-ink-800 text-ink-100">
+                  ×{row.count}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -88,13 +148,13 @@ export default async function DashboardPage() {
                   className="flex items-start justify-between gap-3 px-5 py-3"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium">{c?.name}</span>
-                      <span className="text-xs text-ink-500">·</span>
-                      <span className="truncate text-xs text-ink-400">
-                        {m.subject}
-                      </span>
+                      <ChannelBadge value={m.channel} />
                     </div>
+                    <p className="mt-1 truncate text-xs text-ink-400">
+                      {m.subject}
+                    </p>
                     <p className="mt-1 line-clamp-1 text-xs text-ink-300">
                       {m.body}
                     </p>
@@ -298,6 +358,44 @@ function buildOwnerSummary(
       ? "Your AI manager handled inbound traffic without changes to revenue."
       : `Today I ${joinList(parts)}.`;
   return head + tail;
+}
+
+function countByChannel(messages: InboundMessage[]): Record<Channel, number> {
+  const out: Record<Channel, number> = {
+    email: 0,
+    sms: 0,
+    form: 0,
+    phone_transcript: 0,
+    social_dm: 0,
+  };
+  for (const m of messages) out[m.channel] = (out[m.channel] ?? 0) + 1;
+  return out;
+}
+
+function rollupExternalActions(
+  actions: ActionRecord[],
+): { name: string; count: number; providerLabel: string }[] {
+  const counts = new Map<string, number>();
+  for (const a of actions) {
+    for (const act of a.mock_external_actions) {
+      counts.set(act.name, (counts.get(act.name) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => ({
+      name,
+      count,
+      providerLabel: providerLabelFor(name),
+    }));
+}
+
+function providerLabelFor(name: string): string {
+  if (name.startsWith("sponge")) return "Sponge · payments";
+  if (name.startsWith("agentphone")) return "AgentPhone · SMS / calls";
+  if (name.startsWith("agentmail")) return "AgentMail · email";
+  if (name.startsWith("google_calendar")) return "Google Calendar";
+  return "Integration";
 }
 
 function joinList(parts: string[]): string {

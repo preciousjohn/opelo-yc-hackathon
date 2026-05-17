@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { store } from "@/lib/db/store";
 import {
+  ChannelBadge,
   ClassificationBadge,
   DecisionBadge,
 } from "@/components/Badges";
@@ -50,6 +51,7 @@ export default async function LogsPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <ClassificationBadge value={a.classification} />
                   <DecisionBadge value={a.decision} />
+                  {m && <ChannelBadge value={m.channel} />}
                   {a.llm_used ? (
                     <span className="pill border-accent/40 bg-accent/10 text-accent">
                       LLM

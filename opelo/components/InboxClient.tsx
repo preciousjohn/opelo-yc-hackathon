@@ -9,6 +9,7 @@ import {
   ProcessResult,
 } from "@/lib/types";
 import {
+  ChannelBadge,
   ClassificationBadge,
   DecisionBadge,
   StatusPill,
@@ -194,8 +195,11 @@ export function InboxClient() {
                     </span>
                     <StatusPill status={m.status} />
                   </div>
-                  <div className="mt-1 truncate text-xs text-ink-400">
-                    {m.subject}
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <ChannelBadge value={m.channel} />
+                    <span className="truncate text-xs text-ink-400">
+                      {m.subject}
+                    </span>
                   </div>
                   <div className="mt-2 line-clamp-2 text-xs text-ink-300">
                     {m.body}
@@ -212,7 +216,7 @@ export function InboxClient() {
               <div className="card p-6">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="flex items-center gap-2 text-sm text-ink-300">
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-ink-300">
                       <span className="font-medium text-ink-100">
                         {selectedCustomer.name}
                       </span>
@@ -223,6 +227,7 @@ export function InboxClient() {
                           VIP
                         </span>
                       )}
+                      <ChannelBadge value={selected.channel} />
                     </div>
                     <h2 className="mt-1 text-xl font-semibold">
                       {selected.subject}

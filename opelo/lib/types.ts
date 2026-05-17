@@ -35,10 +35,12 @@ export interface Customer {
   created_at: string;
 }
 
+export type Channel = "email" | "sms" | "form" | "phone_transcript" | "social_dm";
+
 export interface InboundMessage {
   id: string;
   customer_id: string;
-  channel: "email" | "sms" | "form";
+  channel: Channel;
   subject: string;
   body: string;
   received_at: string;

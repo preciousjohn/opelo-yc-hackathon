@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Classification, Decision } from "@/lib/types";
+import { Channel, Classification, Decision } from "@/lib/types";
 
 const classMap: Record<Classification, { label: string; tone: string }> = {
   refund_request: { label: "Refund request", tone: "rose" },
@@ -41,6 +41,19 @@ export function DecisionBadge({ value }: { value: Decision }) {
       {v.label}
     </span>
   );
+}
+
+const channelMap: Record<Channel, { label: string; tone: string }> = {
+  email: { label: "Email", tone: "ink" },
+  sms: { label: "SMS · AgentPhone", tone: "sky" },
+  form: { label: "Form", tone: "ink" },
+  phone_transcript: { label: "Call · AgentPhone", tone: "violet" },
+  social_dm: { label: "Social DM", tone: "amber" },
+};
+
+export function ChannelBadge({ value }: { value: Channel }) {
+  const v = channelMap[value] ?? { label: value, tone: "ink" };
+  return <span className={clsx("pill", tones[v.tone])}>{v.label}</span>;
 }
 
 export function StatusPill({

@@ -11,9 +11,17 @@ import {
 import { classifyHeuristic } from "./classify";
 import { enhanceWithLLM } from "./llm";
 import { agentmail } from "../integrations/agentmail";
-import { stripe } from "../integrations/stripe";
-import { twilio } from "../integrations/twilio";
+import {
+  createRefund as spongeCreateRefund,
+  createPaymentLink as spongeCreatePaymentLink,
+  toMockExternalAction as spongeAction,
+} from "../integrations/sponge";
+import {
+  sendOwnerUpdate as agentphoneSendOwnerUpdate,
+  toMockExternalAction as agentphoneAction,
+} from "../integrations/agentphone";
 import { calendar } from "../integrations/calendar";
+import { demoBusiness } from "../business";
 
 export interface ProcessOptions {
   useLLM?: boolean;
@@ -304,13 +312,38 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
   const actions: MockExternalAction[] = [];
 
   if (plan.action_type === "refund_issued") {
+    const amt = detected_amount ?? 0;
+    const resp = await spongeCreateRefund({
+      customerId: customer.id,
+      amountCents: Math.round(amt * 100),
+      reason: "Auto-approved under owner policy",
+    });
     actions.push(
-      await stripe.createRefund({
-        amount: detected_amount ?? 0,
-        customer_email: customer.email,
-        reason: "Auto-approved under owner policy",
-      }),
+      spongeAction(
+        resp,
+        `Refunded $${amt.toFixed(2)} to ${customer.email} via Sponge.`,
+      ),
     );
+  }
+
+  if (plan.action_type === "discount_offered" || plan.action_type === "sponsorship_countered") {
+    const counter = plan.counter_offer ?? 0;
+    if (counter > 0) {
+      const resp = await spongeCreatePaymentLink({
+        amountCents: Math.round(counter * 100),
+        description:
+          plan.action_type === "sponsorship_countered"
+            ? `${demoBusiness.name} — sponsorship at floor`
+            : `${demoBusiness.name} — reduced scope engagement`,
+        customerEmail: customer.email,
+      });
+      actions.push(
+        spongeAction(
+          resp,
+          `Payment link for $${counter.toLocaleString()} → ${resp.data.url}`,
+        ),
+      );
+    }
   }
 
   if (plan.action_type === "meeting_booked") {
@@ -334,7 +367,6 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     }),
   );
 
-  // Owner SMS for anything non-trivial
   const notifyOwner =
     plan.action_type === "owner_escalated" ||
     plan.action_type === "refund_issued" ||
@@ -342,7 +374,13 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     plan.action_type === "sponsorship_countered" ||
     plan.action_type === "discount_offered";
   if (notifyOwner) {
-    actions.push(await twilio.smsOwner(`Opelo: ${owner_summary}`));
+    const resp = await agentphoneSendOwnerUpdate(`Opelo: ${owner_summary}`);
+    actions.push(
+      agentphoneAction(
+        resp,
+        `SMS to owner ${resp.data.to}: ${resp.data.preview}`,
+      ),
+    );
   }
 
   return actions;
