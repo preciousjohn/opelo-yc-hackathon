@@ -47,9 +47,9 @@ export function PoliciesClient() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <NumberField label="Refund auto-approve threshold ($)" hint="Refunds strictly under this amount are auto-approved for customers without prior refunds." value={policies.refund_auto_approve_under} onChange={(v) => update("refund_auto_approve_under", v)} />
-        <NumberField label="Auto-book qualified lead above ($)" hint="Leads with budgets at or above this amount are auto-booked onto your calendar." value={policies.auto_book_lead_above} onChange={(v) => update("auto_book_lead_above", v)} />
+        <NumberField label="Auto-confirm events above ($)" hint="Event inquiries with budgets at or above this amount get a deposit link immediately." value={policies.auto_book_lead_above} onChange={(v) => update("auto_book_lead_above", v)} />
         <NumberField label="Minimum sponsorship price ($)" hint="Offers below this amount are counter-offered at the floor." value={policies.min_sponsorship_price} onChange={(v) => update("min_sponsorship_price", v)} />
-        <NumberField label="Minimum project price ($)" hint="Consulting / project work is never discounted below this floor." value={policies.min_project_price} onChange={(v) => update("min_project_price", v)} />
+        <NumberField label="Event deposit threshold ($)" hint="Default deposit amount sent to hold a date when qualifying event inquiries." value={policies.min_project_price} onChange={(v) => update("min_project_price", v)} />
       </div>
 
       <ListField label="VIP customer emails" hint="VIP customers always escalate to you before any rejection." values={policies.vip_customers} placeholder="founder@partnerco.com" onChange={(arr) => update("vip_customers", arr)} />

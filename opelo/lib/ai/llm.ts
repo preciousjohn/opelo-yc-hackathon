@@ -48,6 +48,7 @@ const VALID_CLASSIFICATIONS: Classification[] = [
   "pricing_exception",
   "sponsorship_offer",
   "qualified_lead",
+  "event_inquiry",
   "scheduling_request",
   "escalation",
 ];

@@ -10,8 +10,8 @@ export function defaultPolicies(): Policies {
   return {
     refund_auto_approve_under: 100,
     min_sponsorship_price: 2000,
-    min_project_price: 2500,
-    vip_customers: ["acme@vip.co"],
+    min_project_price: 800,
+    vip_customers: ["founder@bigcorp.com"],
     escalation_keywords: [
       "ridiculous",
       "lawyer",
@@ -27,49 +27,46 @@ export function defaultPolicies(): Policies {
       "frustrated",
     ],
     booking_availability:
-      "Tuesdays and Thursdays, 10am–4pm PT. 30-min intro or 60-min working session.",
-    auto_book_lead_above: 5000,
+      "Weekends and Fri–Sun, 8am–2pm. 2-week lead time for events over 50 guests.",
+    auto_book_lead_above: 1200,
   };
 }
 
 export function seedCustomers(): Customer[] {
   const now = new Date().toISOString();
-  // Kept slim for the live demo: 2 history customers so the operational feed
-  // has visible activity, plus 2 fallback customers in case the live
-  // AgentMail/AgentPhone integrations hiccup. Everything else is removed so
-  // the inbox doesn't compete with real inbound.
   return [
     {
-      id: "cus_alex",
-      name: "Alex",
-      email: "alex@example.com",
-      vip: false,
-      prior_refunds: 0,
-      lifetime_value: 82,
-      created_at: now,
-    },
-    {
-      id: "cus_dtc",
-      name: "DTC Founder",
-      email: "founder@dtcbrand.com",
+      id: "cus_jamie",
+      name: "Jamie Chen",
+      email: "jamie.chen@gmail.com",
       vip: false,
       prior_refunds: 0,
       lifetime_value: 0,
       created_at: now,
     },
     {
-      id: "cus_seed_priya",
-      name: "Priya",
-      email: "priya@example.com",
+      id: "cus_oakwave",
+      name: "OakWave Snacks",
+      email: "partnerships@oakwave.io",
       vip: false,
       prior_refunds: 0,
-      lifetime_value: 49,
+      lifetime_value: 0,
       created_at: now,
     },
     {
-      id: "cus_seed_oakwave",
-      name: "OakWave Snacks",
-      email: "partnerships@oakwave.io",
+      id: "cus_marcus",
+      name: "Marcus Webb",
+      email: "marcus@riversidecorp.com",
+      phone: "+15555550188",
+      vip: false,
+      prior_refunds: 0,
+      lifetime_value: 0,
+      created_at: now,
+    },
+    {
+      id: "cus_sofia",
+      name: "Sofia Ruiz",
+      email: "sofia@parkviewhoa.org",
       vip: false,
       prior_refunds: 0,
       lifetime_value: 0,
@@ -83,49 +80,44 @@ export function seedMessages(): InboundMessage[] {
   const earlier = (mins: number) =>
     new Date(base - mins * 60 * 1000).toISOString();
   return [
-    // Two already-handled workflows so the operational feed has visible
-    // history when the cockpit loads.
     {
-      id: "msg_seed_refund_handled",
-      customer_id: "cus_seed_priya",
+      id: "msg_seed_event_handled",
+      customer_id: "cus_jamie",
       channel: "email",
-      subject: "Refund request — creator course",
-      body: "Hi! I bought your $49 starter pack last week and it just isn't a fit for me. Could I get a refund?",
+      subject: "Graduation party — June 12",
+      body: "Hi! Loved your cart at my friend's wedding last month. Can I book you for a graduation party on June 12? We're expecting about 80 people in our backyard in Palo Alto.",
       received_at: earlier(112),
       status: "handled",
-      amount_hint: 49,
+      amount_hint: 800,
     },
     {
       id: "msg_seed_sponsor_handled",
-      customer_id: "cus_seed_oakwave",
+      customer_id: "cus_oakwave",
       channel: "email",
-      subject: "Sponsorship — $500 for next video",
-      body: "Hi! We'd love to sponsor your next video for $500. 30s mid-roll integration, link in description.",
+      subject: "Brand activation — farmers market booth",
+      body: "Hi Hanadi! We'd love to sponsor a nood coffee pop-up at our farmers market series for $500. 4-hour slot, logo on the cart, social shoutout.",
       received_at: earlier(54),
       status: "handled",
       amount_hint: 500,
     },
-    // Two fallback workflows in case the live AgentMail / AgentPhone
-    // integrations hiccup mid-demo. Everything else lands via real webhooks.
     {
-      id: "msg_refund_001",
-      customer_id: "cus_alex",
+      id: "msg_corp_event_001",
+      customer_id: "cus_marcus",
       channel: "email",
-      subject: "Refund request for creator course",
-      body: "Hey, I bought your creator course yesterday but it wasn't what I expected. Can I get a refund? It was $82.",
+      subject: "Corporate offsite — coffee cart for 120",
+      body: "Hi, we're planning a team offsite in September and need a coffee cart for ~120 employees. Budget is around $1,400 for a full day. Are you available Sept 18 in SF?",
       received_at: earlier(8),
       status: "new",
-      amount_hint: 82,
+      amount_hint: 1400,
     },
     {
-      id: "msg_lead_004",
-      customer_id: "cus_dtc",
-      channel: "phone_transcript",
-      subject: "Phone call transcript — AI workflow build",
-      body: "Hi, I run a fast-growing DTC brand and need help building an AI customer support workflow. Budget is around $8k. Are you available next week?",
+      id: "msg_hoa_event_002",
+      customer_id: "cus_sofia",
+      channel: "sms",
+      subject: "Community block party",
+      body: "Hey! Our HOA is hosting a block party July 4th — maybe 60 families. Do you do coffee carts for neighborhood events? What would pricing look like?",
       received_at: earlier(2),
       status: "new",
-      amount_hint: 8000,
     },
   ];
 }
@@ -136,89 +128,94 @@ export function seedActions(): ActionRecord[] {
     new Date(base - mins * 60 * 1000).toISOString();
   return [
     {
-      id: "act_seed_refund",
-      message_id: "msg_seed_refund_handled",
-      customer_id: "cus_seed_priya",
-      classification: "refund_request",
+      id: "act_seed_event",
+      message_id: "msg_seed_event_handled",
+      customer_id: "cus_jamie",
+      classification: "event_inquiry",
       decision: "approve",
-      policy_applied: "Auto-approve refunds under $100",
+      policy_applied:
+        "Qualify event leads, collect details, request deposit to confirm",
       reasoning_summary:
-        "Refund of $49 fell under the auto-approve threshold and Priya had no prior refunds.",
+        "Graduation party for ~80 guests — sent deposit link to hold June 12.",
       customer_response:
-        "Thanks for the note, Priya — I've issued your $49 refund. You should see it on your statement within a few business days. Any feedback on what didn't land would mean a lot.",
-      owner_summary: "Approved a $49 refund under your auto-refund policy.",
-      action_type: "refund_issued",
+        "Thanks so much for reaching out, Jamie — we'd love to be at your graduation party! For ~80 guests on June 12, our half-day package ($800) is usually the right fit. I've sent a deposit link to hold your date; once that's in, I'll confirm setup time and any custom drink requests.\n\nBest,\nHanadi\nFounder",
+      owner_summary:
+        "New event inquiry from Jamie Chen — graduation party June 12, ~80 guests. Deposit link sent.",
+      action_type: "deposit_requested",
       mock_external_actions: [
         {
-          name: "sponge.mock.refund.created",
+          name: "sponge.payment_link.created",
           ok: true,
-          ref: "re_seed_priya49",
-          detail: "Refunded $49.00 to priya@example.com via Sponge.",
+          ref: "plink_seed_jamie",
+          detail:
+            "Payment link for $800 → https://wallet.paysponge.com/pay/pl_seed_jamie",
         },
         {
           name: "agentmail.reply",
           ok: true,
-          ref: "am_seed_priya",
-          detail: "Replied to priya@example.com — 'Re: Refund request — creator course'.",
+          ref: "am_seed_jamie",
+          detail:
+            "Replied to jamie.chen@gmail.com — 'Re: Graduation party — June 12'.",
         },
         {
           name: "agentphone.mock.sms.owner_update.sent",
           ok: true,
-          ref: "ap_seed_owner_refund",
+          ref: "ap_seed_owner_event",
           detail:
-            "SMS to owner +15555550123: Opelo: Approved a $49 refund under your auto-refund policy.",
+            "SMS to owner: Opelo: New event inquiry from Jamie Chen — graduation party June 12, ~80 guests. Deposit link sent.",
         },
         {
-          name: "supermemory.mock.decision.saved",
+          name: "supabase.decision.saved",
           ok: true,
-          ref: "mem_seed_refund",
-          detail: "Saved decision to Opelo Demo Studio memory.",
+          ref: "mem_seed_event",
+          detail: "Saved decision to nood coffee memory.",
         },
       ],
-      revenue_delta: -49,
+      revenue_delta: 0,
+      counter_offer: 800,
       llm_used: false,
       created_at: earlier(110),
     },
     {
       id: "act_seed_sponsor",
       message_id: "msg_seed_sponsor_handled",
-      customer_id: "cus_seed_oakwave",
+      customer_id: "cus_oakwave",
       classification: "sponsorship_offer",
       decision: "negotiate",
       policy_applied: "Reject sponsorships under $2000; counter to floor",
       reasoning_summary:
-        "OakWave's $500 offer was below your $2,000 floor — countered at the floor with the same deliverables.",
+        "OakWave's $500 offer was below your $2,000 floor — countered at the floor.",
       customer_response:
-        "Thanks so much for reaching out — really like OakWave. The package you're describing typically lands at $2,000, which covers a 30-second integration plus a short-form repost. Happy to lock that in if it works.",
+        "Thanks so much for reaching out — love OakWave! A farmers-market pop-up with logo and social typically lands at $2,000 for a 4-hour slot. Happy to lock that in if it works.\n\nBest,\nHanadi\nFounder",
       owner_summary: "Countered a $500 sponsorship to your $2,000 floor.",
       action_type: "sponsorship_countered",
       mock_external_actions: [
         {
-          name: "sponge.mock.payment_link.created",
+          name: "sponge.payment_link.created",
           ok: true,
           ref: "plink_seed_oakwave",
           detail:
-            "Payment link for $2,000 → https://pay.sponge.demo/plink_seed_oakwave",
+            "Payment link for $2,000 → https://wallet.paysponge.com/pay/pl_seed_oakwave",
         },
         {
           name: "agentmail.reply",
           ok: true,
           ref: "am_seed_oakwave",
           detail:
-            "Replied to partnerships@oakwave.io — 'Re: Sponsorship — $500 for next video'.",
+            "Replied to partnerships@oakwave.io — 'Re: Brand activation — farmers market booth'.",
         },
         {
           name: "agentphone.mock.sms.owner_update.sent",
           ok: true,
           ref: "ap_seed_owner_sponsor",
           detail:
-            "SMS to owner +15555550123: Opelo: Countered a $500 sponsorship to your $2,000 floor.",
+            "SMS to owner: Opelo: Countered a $500 sponsorship to your $2,000 floor.",
         },
         {
-          name: "supermemory.mock.decision.saved",
+          name: "supabase.decision.saved",
           ok: true,
           ref: "mem_seed_sponsor",
-          detail: "Saved decision to Opelo Demo Studio memory.",
+          detail: "Saved decision to nood coffee memory.",
         },
       ],
       revenue_delta: 0,
@@ -230,21 +227,16 @@ export function seedActions(): ActionRecord[] {
 }
 
 export function seedWallet(): CompanyWallet {
-  // Available reflects the studio's cash on hand; refunded_today is pre-loaded
-  // with the seeded $49 Priya refund so the metric already has history.
   return {
-    available_cents: 1_842_300,
-    pending_cents: 96_400,
-    refunded_today_cents: 4_900,
-    revenue_generated_today_cents: 0,
+    available_cents: 842_300,
+    pending_cents: 80_000,
+    refunded_today_cents: 0,
+    revenue_generated_today_cents: 80000,
     currency: "USD",
     updated_at: new Date().toISOString(),
   };
 }
 
 export function seedPendingInbound(): InboundMessage[] {
-  // Empty for the live demo — real inbound arrives via AgentMail /
-  // AgentPhone webhooks instead. To re-enable the simulated drip during
-  // development, add InboundMessage entries here.
   return [];
 }

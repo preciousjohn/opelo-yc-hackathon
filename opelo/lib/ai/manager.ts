@@ -278,6 +278,22 @@ function decide(args: DecideArgs): DecisionPlan {
       };
     }
 
+    case "event_inquiry": {
+      const amt = detected_amount ?? 0;
+      return {
+        decision: amt > 0 ? "approve" : "schedule",
+        action_type: amt > 0 ? "deposit_requested" : "meeting_booked",
+        policy_applied:
+          "Qualify event leads, collect details, request deposit to confirm",
+        fallback_customer_response: `Thanks so much for reaching out! We'd love to be there for your event. To confirm your date, I'll need a few details: How many guests are you expecting? What's the event address and setup time? I'll follow up with a deposit link to hold the date.`,
+        fallback_owner_summary: `New event inquiry from ${customer.name}${amt > 0 ? ` — $${amt.toFixed(0)} budget mentioned` : ""}.`,
+        fallback_reasoning_summary:
+          "Event inquiry — collecting details and requesting deposit to confirm.",
+        revenue_delta: 0,
+        counter_offer: amt > 0 ? amt : policies.min_project_price,
+      };
+    }
+
     case "qualified_lead": {
       const amt = detected_amount ?? 0;
       if (amt >= policies.auto_book_lead_above) {
@@ -357,15 +373,22 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     );
   }
 
-  if (plan.action_type === "discount_offered" || plan.action_type === "sponsorship_countered") {
+  if (
+    plan.action_type === "discount_offered" ||
+    plan.action_type === "sponsorship_countered" ||
+    plan.action_type === "deposit_requested"
+  ) {
     const counter = plan.counter_offer ?? 0;
     if (counter > 0) {
+      const description =
+        plan.action_type === "sponsorship_countered"
+          ? `${demoBusiness.name} — sponsorship at floor`
+          : plan.action_type === "deposit_requested"
+            ? `${demoBusiness.name} — event deposit`
+            : `${demoBusiness.name} — reduced scope engagement`;
       const resp = await spongeCreatePaymentLink({
         amountCents: Math.round(counter * 100),
-        description:
-          plan.action_type === "sponsorship_countered"
-            ? `${demoBusiness.name} — sponsorship at floor`
-            : `${demoBusiness.name} — reduced scope engagement`,
+        description,
         customerEmail: customer.email,
       });
       actions.push(
@@ -439,6 +462,8 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     plan.action_type === "owner_escalated" ||
     plan.action_type === "refund_issued" ||
     plan.action_type === "meeting_booked" ||
+    plan.action_type === "deposit_requested" ||
+    plan.action_type === "event_confirmed" ||
     plan.action_type === "sponsorship_countered" ||
     plan.action_type === "discount_offered";
   if (notifyOwner) {

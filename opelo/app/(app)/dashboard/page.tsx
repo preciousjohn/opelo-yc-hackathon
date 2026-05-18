@@ -10,6 +10,7 @@ function actionEmoji(t: ActionType): string {
     refund_issued: "✅", meeting_booked: "📅", owner_escalated: "🔔",
     sponsorship_countered: "💬", discount_offered: "💬", auto_reply_sent: "✉️",
     sponsorship_declined: "✖️", lead_nurtured: "🌱",
+    deposit_requested: "💳", event_confirmed: "🎉", day_of_reminder_sent: "☕",
   };
   return map[t] ?? "⚡";
 }
@@ -18,6 +19,9 @@ function actionBadge(t: ActionType): { label: string; cls: string } {
   const map: Partial<Record<ActionType, { label: string; cls: string }>> = {
     refund_issued:         { label: "REFUND APPROVED",   cls: "text-emerald-700 bg-emerald-50 border-emerald-200" },
     meeting_booked:        { label: "MEETING BOOKED",    cls: "text-sky-700     bg-sky-50     border-sky-200"     },
+    deposit_requested:     { label: "DEPOSIT SENT",      cls: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+    event_confirmed:       { label: "EVENT CONFIRMED",   cls: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+    day_of_reminder_sent:  { label: "REMINDER SENT",     cls: "text-sky-700     bg-sky-50     border-sky-200"     },
     owner_escalated:       { label: "NEEDS YOUR REVIEW", cls: "text-amber-700   bg-amber-50   border-amber-200"   },
     sponsorship_countered: { label: "COUNTER SENT",      cls: "text-violet-700  bg-violet-50  border-violet-200"  },
     discount_offered:      { label: "PRICE HELD",        cls: "text-blue-700    bg-blue-50    border-blue-200"    },
@@ -30,9 +34,13 @@ function describeAction(a: ActionRecord, customers: Customer[]): string {
   const c = customers.find(x => x.id === a.customer_id);
   const first = c?.name?.split(" ")[0] ?? "A customer";
   const amt = a.revenue_delta ? `$${Math.abs(a.revenue_delta).toFixed(0)}` : "";
+  const deposit = a.counter_offer ? `$${a.counter_offer.toFixed(0)}` : amt;
   switch (a.action_type) {
     case "refund_issued": return `${first} got a ${amt} refund processed`;
-    case "meeting_booked": return `Meeting with ${first} is on the calendar`;
+    case "meeting_booked": return `Sent ${first} availability to book an event`;
+    case "deposit_requested": return `Sent ${first} a ${deposit} deposit link to hold their date`;
+    case "event_confirmed": return `${first}'s event is confirmed on the calendar`;
+    case "day_of_reminder_sent": return `Sent ${first} a day-of event reminder`;
     case "owner_escalated": return `${first}'s request needs your personal attention`;
     case "sponsorship_countered": return `Sent ${first} a counter-offer for their sponsorship`;
     case "discount_offered": return `Held your pricing floor with ${first}`;
@@ -62,7 +70,8 @@ export default async function DashboardPage() {
     if (a.revenue_delta > 0) return sum + a.revenue_delta;
     return sum;
   }, 0);
-  const meetings = actions.filter(a => a.action_type === "meeting_booked").length;
+  const deposits = actions.filter(a => a.action_type === "deposit_requested").length;
+  const eventsConfirmed = actions.filter(a => a.action_type === "event_confirmed").length;
   const needsReview = actions.filter(a => a.action_type === "owner_escalated").length;
 
   const recent = actions.slice(0, 8);
@@ -86,7 +95,7 @@ export default async function DashboardPage() {
         {[
           { emoji: "📬", label: "Requests handled", value: String(totalHandled), sub: "total this session" },
           { emoji: "💰", label: "Money saved & earned", value: `$${moneySaved.toFixed(0)}`, sub: "refunds + new revenue" },
-          { emoji: "📅", label: "Meetings set up", value: String(meetings), sub: "auto-booked for you" },
+          { emoji: "💳", label: "Deposits sent", value: String(deposits), sub: `${eventsConfirmed} events confirmed` },
           { emoji: "🔔", label: "Need your review", value: String(needsReview), sub: "waiting on you", highlight: needsReview > 0 },
         ].map(card => (
           <div key={card.label} className={`rounded-2xl border p-5 bg-white ${card.highlight ? "border-amber-200" : "border-stone-100"}`}>

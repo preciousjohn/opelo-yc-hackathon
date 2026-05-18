@@ -3,6 +3,7 @@ export type Classification =
   | "pricing_exception"
   | "sponsorship_offer"
   | "qualified_lead"
+  | "event_inquiry"
   | "scheduling_request"
   | "escalation";
 
@@ -19,6 +20,9 @@ export type ActionType =
   | "sponsorship_declined"
   | "sponsorship_countered"
   | "meeting_booked"
+  | "deposit_requested"
+  | "event_confirmed"
+  | "day_of_reminder_sent"
   | "owner_escalated"
   | "lead_nurtured"
   | "auto_reply_sent";

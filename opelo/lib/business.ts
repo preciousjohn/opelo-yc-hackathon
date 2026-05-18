@@ -5,6 +5,7 @@ export interface BusinessOffering {
 
 export interface BusinessProfile {
   name: string;
+  website: string;
   ownerName: string;
   managerName: string;
   phone: string;
@@ -12,14 +13,15 @@ export interface BusinessProfile {
 }
 
 export const demoBusiness: BusinessProfile = {
-  name: "Opelo Demo Studio",
-  ownerName: process.env.BUSINESS_OWNER_NAME || "Raina",
+  name: "nood coffee",
+  website: process.env.BUSINESS_WEBSITE || "noodcoffeeca.com",
+  ownerName: process.env.BUSINESS_OWNER_NAME || "Hanadi",
   managerName: "Opelo",
   phone: process.env.OWNER_PHONE_NUMBER || "+15555550123",
   offerings: [
-    { name: "Creator Course", priceCents: 8200 },
-    { name: "Consulting Package", priceCents: 300000 },
-    { name: "AI Workflow Implementation", priceCents: 800000 },
+    { name: "Cart — Half Day (up to 4hrs)", priceCents: 80000 },
+    { name: "Cart — Full Day", priceCents: 140000 },
+    { name: "Custom Event Package", priceCents: 120000 },
   ],
 };
 

@@ -6,6 +6,7 @@ const classMap: Record<Classification, { label: string; tone: string }> = {
   pricing_exception: { label: "Pricing exception", tone: "amber"   },
   sponsorship_offer: { label: "Sponsorship",       tone: "violet"  },
   qualified_lead:    { label: "Qualified lead",    tone: "emerald" },
+  event_inquiry:     { label: "Event inquiry",     tone: "emerald" },
   scheduling_request:{ label: "Scheduling",        tone: "sky"     },
   escalation:        { label: "Escalation",        tone: "red"     },
 };

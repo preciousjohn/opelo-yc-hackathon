@@ -285,6 +285,7 @@ function TopBar({
           <div className="text-sm font-medium text-ink-100">
             {demoBusiness.name}
           </div>
+          <div className="text-xs text-ink-500">{demoBusiness.website}</div>
         </div>
       </div>
 
@@ -694,7 +695,7 @@ function PoliciesCard({
           />
         </PolicyRow>
         <PolicyRow
-          label="Consulting floor"
+          label="Event deposit threshold"
           value={`$${policies.min_project_price.toLocaleString()}`}
         >
           <NumberInline
@@ -703,7 +704,7 @@ function PoliciesCard({
           />
         </PolicyRow>
         <PolicyRow
-          label="Auto-book leads over"
+          label="Auto-confirm events over"
           value={`$${policies.auto_book_lead_above.toLocaleString()}`}
         >
           <NumberInline
@@ -871,9 +872,9 @@ function LeverageStrip({ stats }: { stats: Stats }) {
           hint="From leads and scheduling"
         />
         <LeverageCell
-          label="Refunds handled"
-          value={`${stats.refundsApproved + stats.refundsEscalated}`}
-          hint={`${stats.refundsApproved} approved · ${stats.refundsEscalated} held`}
+          label="Deposits sent"
+          value={String(stats.depositsSent)}
+          hint={`${stats.eventsConfirmed} events confirmed`}
         />
         <LeverageCell
           label="Owner interruptions avoided"
@@ -912,6 +913,8 @@ interface Stats {
   revenueGenerated: number;
   revenueImpact: number;
   meetingsBooked: number;
+  depositsSent: number;
+  eventsConfirmed: number;
   escalations: number;
   interruptionsAvoided: number;
 }
@@ -922,6 +925,8 @@ function computeStats(actions: ActionRecord[]): Stats {
   let refundsTotal = 0;
   let revenueGenerated = 0;
   let meetingsBooked = 0;
+  let depositsSent = 0;
+  let eventsConfirmed = 0;
   let escalations = 0;
   let interruptionsAvoided = 0;
   for (const a of actions) {
@@ -934,6 +939,8 @@ function computeStats(actions: ActionRecord[]): Stats {
       }
     }
     if (a.action_type === "meeting_booked") meetingsBooked += 1;
+    if (a.action_type === "deposit_requested") depositsSent += 1;
+    if (a.action_type === "event_confirmed") eventsConfirmed += 1;
     if (a.action_type === "owner_escalated") escalations += 1;
     if (a.decision !== "escalate_to_owner") interruptionsAvoided += 1;
     if (a.revenue_delta > 0) revenueGenerated += a.revenue_delta;
@@ -945,6 +952,8 @@ function computeStats(actions: ActionRecord[]): Stats {
     revenueGenerated,
     revenueImpact: revenueGenerated - refundsTotal,
     meetingsBooked,
+    depositsSent,
+    eventsConfirmed,
     escalations,
     interruptionsAvoided,
   };
@@ -967,6 +976,7 @@ function prettyClass(c: string): string {
     pricing_exception: "Pricing exception",
     sponsorship_offer: "Sponsorship offer",
     qualified_lead: "Qualified lead",
+    event_inquiry: "Event inquiry",
     scheduling_request: "Scheduling request",
     escalation: "Escalation",
   };
