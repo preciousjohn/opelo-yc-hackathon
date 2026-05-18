@@ -13,6 +13,7 @@ export interface GeminiInput {
   next_slot_label?: string;
   business_name: string;
   owner_name: string;
+  customer_history?: string[];
 }
 
 export interface GeminiDecisionResponse {
@@ -26,7 +27,7 @@ export interface GeminiDecisionResponse {
   suggested_external_actions: string[];
 }
 
-const SYSTEM_INSTRUCTION = `You are an AI operations manager for a one-person business. You make practical business decisions based on explicit owner policies. You do not merely draft replies; you decide what should happen, choose the relevant policy, generate a customer response, and summarize the owner update. Never expose chain-of-thought. Reasoning_summary must be one short business sentence — not a step-by-step trace. Return only valid JSON.`;
+const SYSTEM_INSTRUCTION = `You are Opelo, an AI operations manager for a local service business (coffee cart, catering, events). You handle event inquiries, collect booking details, send deposit requests, and coordinate day-of logistics. You make real operational decisions based on the owner's policies. Never expose chain-of-thought. reasoning_summary must be one short operational sentence. Return only valid JSON.`;
 
 export function isGeminiAvailable(): boolean {
   return !!process.env.GEMINI_API_KEY;
@@ -97,6 +98,11 @@ function buildPrompt(input: GeminiInput): string {
       `For scheduling, the customer_response should reference the booked time or available windows so the customer can act immediately.`,
     );
   }
+  if (input.classification === "event_inquiry") {
+    guardrails.push(
+      `This is a coffee cart / event service booking inquiry. The customer_response must sound like a warm, professional local business operator. Ask for any missing details (guest count, date, address, setup time, drink preferences, day-of contact). If a budget/amount was detected, mention that a deposit link is being sent to hold the date. Never use consulting or creator industry language.`,
+    );
+  }
 
   return `Business: ${input.business_name} (owner: ${input.owner_name}). You are "${input.managerName}", the AI operations manager.
 
@@ -112,16 +118,19 @@ Inbound message:
 """
 ${input.message_body}
 """
+${input.customer_history?.length
+  ? `\nCustomer history (last ${input.customer_history.length} interactions):\n${input.customer_history.join("\n")}`
+  : ""}
 
 Return ONLY a JSON object matching this exact schema:
 {
-  "classification": "refund_request|pricing_exception|sponsorship_offer|qualified_lead|scheduling_request|escalation",
+  "classification": "event_inquiry|refund_request|pricing_exception|sponsorship_offer|qualified_lead|scheduling_request|escalation",
   "reasoning_summary": "one short business sentence, no chain-of-thought",
   "decision": "approve|reject|negotiate|schedule|escalate_to_owner",
   "policy_applied": "short policy label that justified the decision",
-  "customer_response": "2-4 short sentences, warm + professional, signed from the owner (not the AI)",
+  "customer_response": "2-4 short sentences, warm + professional. Do not include a signoff or signature — one will be appended automatically.",
   "owner_summary": "one sentence the owner can read at a glance",
-  "action_type": "refund_issued|discount_offered|sponsorship_declined|sponsorship_countered|meeting_booked|owner_escalated|lead_nurtured|auto_reply_sent",
+  "action_type": "deposit_requested|event_confirmed|day_of_reminder_sent|refund_issued|discount_offered|sponsorship_declined|sponsorship_countered|meeting_booked|owner_escalated|lead_nurtured|auto_reply_sent",
   "suggested_external_actions": ["sponge.refund.created", "agentmail.reply", "agentphone.sms.owner_update"]
 }
 

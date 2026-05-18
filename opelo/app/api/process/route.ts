@@ -70,6 +70,14 @@ export async function POST(req: NextRequest) {
       if (amountDollars > 0) {
         wallet = await store.applyRefund(Math.round(amountDollars * 100));
       }
+    } else if (result.action_type === "deposit_requested") {
+      const pipelineDollars =
+        result.counter_offer ?? result.detected_amount ?? 0;
+      if (pipelineDollars > 0) {
+        wallet = await store.applyPaymentLinkCreated(
+          Math.round(pipelineDollars * 100),
+        );
+      }
     } else if (
       result.action_type === "discount_offered" ||
       result.action_type === "sponsorship_countered"

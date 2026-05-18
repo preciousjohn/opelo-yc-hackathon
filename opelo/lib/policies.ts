@@ -37,6 +37,9 @@ export async function savePolicies(input: Partial<Policies>): Promise<Policies> 
       0,
       10_000_000,
     ),
+    event_detail_fields: dedupe(
+      input.event_detail_fields ?? current.event_detail_fields ?? [],
+    ).slice(0, 20),
   };
   return store.setPolicies(next);
 }

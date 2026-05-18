@@ -11,6 +11,22 @@ const SPONSOR_TERMS = ["sponsor", "sponsorship", "ad spot", "brand deal", "integ
 const PRICING_TERMS = ["discount", "cheaper", "lower price", "instead of", "can you do"];
 const SCHEDULE_TERMS = ["schedule", "book a call", "call next", "available", "meeting"];
 const LEAD_TERMS = ["need help", "build", "looking to hire", "project", "workflow"];
+const EVENT_TERMS = [
+  "book",
+  "event",
+  "party",
+  "graduation",
+  "wedding",
+  "birthday",
+  "coffee cart",
+  "catering",
+  "venue",
+  "guests",
+  "people",
+  "corporate",
+  "brunch",
+  "popup",
+];
 
 function detectAmount(text: string): number | undefined {
   // Prefer the FIRST dollar amount — in negotiation-shaped messages people
@@ -60,6 +76,8 @@ export function classifyHeuristic(
     !any(lower, [...REFUND_TERMS, ...SPONSOR_TERMS, ...PRICING_TERMS])
   ) {
     classification = "escalation";
+  } else if (any(lower, EVENT_TERMS) && !any(lower, REFUND_TERMS)) {
+    classification = "event_inquiry";
   } else if (any(lower, SCHEDULE_TERMS) && !any(lower, LEAD_TERMS)) {
     classification = "scheduling_request";
   } else if (any(lower, LEAD_TERMS) || (detected_amount ?? 0) >= 1000) {

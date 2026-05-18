@@ -1,5 +1,7 @@
 import {
   ActionType,
+  Booking,
+  Channel,
   Classification,
   Customer,
   Decision,
@@ -24,13 +26,27 @@ import { nanoid } from "../integrations/util";
 import { calendar } from "../integrations/calendar";
 import {
   saveDecision as supermemorySaveDecision,
+  searchMemory,
   toMockExternalAction as supermemoryAction,
 } from "../integrations/supermemory";
-import { demoBusiness } from "../business";
+import { businessSignature, demoBusiness } from "../business";
+import { createDepositBookingFlow } from "../booking/flow";
+import { store } from "../db/store";
 
 export interface ProcessOptions {
   useLLM?: boolean;
   managerName?: string;
+}
+
+function stripSignature(text: string): string {
+  return text
+    .replace(/\n\s*(best|thanks|thank you|warmly|sincerely),?\s*\n[\s\S]*$/i, "")
+    .trim();
+}
+
+function signedCustomerResponse(text: string, channel: Channel): string {
+  const sigChannel = channel === "form" ? "email" : channel;
+  return `${stripSignature(text)}\n\n${businessSignature(sigChannel)}`;
 }
 
 interface DecisionPlan {
@@ -50,10 +66,23 @@ export async function processInboundMessage(
   customer: Customer,
   options: ProcessOptions = {},
 ): Promise<ProcessResult> {
+  const memoryResult = await searchMemory(customer.id);
+  const customerHistory = memoryResult.data.matches;
+
   const hints = classifyHeuristic(message, policies);
   const classification: Classification = hints.classification;
   const isVip =
     customer.vip || policies.vip_customers.includes(customer.email);
+
+  // Pull any active booking for this customer BEFORE deciding. If one exists
+  // and is mid-flow ("deposit_sent" / "details_needed"), this message is a
+  // follow-up — Opelo should acknowledge details on the existing booking,
+  // not start a new deposit flow.
+  const existingBooking = await store.getBookingByCustomer(customer.id);
+  const isActiveFollowUp =
+    !!existingBooking &&
+    (existingBooking.stage === "deposit_sent" ||
+      existingBooking.stage === "details_needed");
 
   const plan = decide({
     classification,
@@ -62,6 +91,8 @@ export async function processInboundMessage(
     is_vip: isVip,
     customer,
     policies,
+    existing_booking: existingBooking ?? null,
+    is_active_follow_up: isActiveFollowUp,
   });
 
   // Default texts come from deterministic engine. LLM optionally rewrites tone.
@@ -83,6 +114,7 @@ export async function processInboundMessage(
       next_slot_label:
         plan.decision === "schedule" ? calendar.nextSlotLabel() : undefined,
       manager_name: options.managerName,
+      customer_history: customerHistory,
     });
     if (enhanced) {
       llm_used = true;
@@ -96,11 +128,44 @@ export async function processInboundMessage(
     }
   }
 
+  let responseBody = customer_response;
+  if (plan.action_type === "deposit_requested" && !isActiveFollowUp) {
+    const depositDollars =
+      plan.counter_offer ?? hints.detected_amount ?? 800;
+    const flow = await createDepositBookingFlow({
+      message,
+      customer,
+      depositDollars,
+    });
+    responseBody += flow.appendix;
+  }
+  // Follow-up reply on an existing booking: persist the new details onto the
+  // booking so the dashboard shows the chain (no new booking row).
+  if (plan.action_type === "event_confirmed" && existingBooking) {
+    const { extractEventDetails } = await import("../booking/extract");
+    const parsed = extractEventDetails(
+      `${message.subject}\n${message.body}`,
+    );
+    await store.updateBooking(existingBooking.id, {
+      event_date: parsed.date ?? existingBooking.event_date,
+      event_address: parsed.address ?? existingBooking.event_address,
+      guest_count: parsed.guestCount ?? existingBooking.guest_count,
+      drink_notes: parsed.drinkNotes ?? existingBooking.drink_notes,
+      stage:
+        existingBooking.stage === "details_needed"
+          ? "deposit_sent"
+          : existingBooking.stage,
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  const signed_response = signedCustomerResponse(responseBody, message.channel);
+
   const externalActions = await runExternalActions({
     plan,
     message,
     customer,
-    customer_response,
+    customer_response: signed_response,
     owner_summary,
     detected_amount: hints.detected_amount,
   });
@@ -110,7 +175,7 @@ export async function processInboundMessage(
     reasoning_summary,
     decision: plan.decision,
     policy_applied: plan.policy_applied,
-    customer_response,
+    customer_response: signed_response,
     owner_summary,
     action_type: plan.action_type,
     mock_external_actions: externalActions,
@@ -128,10 +193,21 @@ interface DecideArgs {
   is_vip: boolean;
   customer: Customer;
   policies: Policies;
+  existing_booking: Booking | null;
+  is_active_follow_up: boolean;
 }
 
 function decide(args: DecideArgs): DecisionPlan {
-  const { classification, detected_amount, is_escalation, is_vip, customer, policies } = args;
+  const {
+    classification,
+    detected_amount,
+    is_escalation,
+    is_vip,
+    customer,
+    policies,
+    existing_booking,
+    is_active_follow_up,
+  } = args;
 
   if (is_escalation && classification !== "refund_request") {
     return {
@@ -143,6 +219,34 @@ function decide(args: DecideArgs): DecisionPlan {
         "Detected escalation language — routed to owner before any auto-reply.",
       fallback_customer_response: `Hi ${firstName(customer.name)}, I'm sorry for the slow response — your note has been flagged for me personally and I'll get back to you today.\n\n— Sent by your Opelo AI manager`,
       fallback_owner_summary: `Escalated: "${customer.name}" — angry/complaint language detected. Hold off on auto-reply.`,
+      revenue_delta: 0,
+    };
+  }
+
+  // Follow-up on an active booking. Customer already has a deposit-sent /
+  // details-needed booking — this inbound is part of the SAME conversation.
+  // Route as event_confirmed regardless of how the classifier scored the
+  // body (the details-only reply often heuristics as qualified_lead or
+  // scheduling_request because it has no "event" keyword). Refund /
+  // sponsorship / explicit escalation still flow through their own paths.
+  if (
+    is_active_follow_up &&
+    existing_booking &&
+    classification !== "refund_request" &&
+    classification !== "sponsorship_offer" &&
+    classification !== "escalation"
+  ) {
+    const linkLine = existing_booking.deposit_link
+      ? `\n\nYour deposit link is still here if you haven't paid yet: ${existing_booking.deposit_link}`
+      : "";
+    return {
+      decision: "approve",
+      action_type: "event_confirmed",
+      policy_applied:
+        "Follow-up on existing booking — acknowledge details, do not duplicate the deposit ask",
+      fallback_customer_response: `Thanks, ${firstName(customer.name)} — got it all. I've added these details to your booking and we're locked in pending the deposit.${linkLine}`,
+      fallback_owner_summary: `${customer.name} replied with event details on existing booking ${existing_booking.id}. Stage stays "${existing_booking.stage}" until deposit clears.`,
+      fallback_reasoning_summary: `Follow-up reply on active booking ${existing_booking.id} — captured details, did not duplicate deposit flow.`,
       revenue_delta: 0,
     };
   }
@@ -250,12 +354,33 @@ function decide(args: DecideArgs): DecisionPlan {
       return {
         decision: "negotiate",
         action_type: "discount_offered",
-        policy_applied: `Never discount consulting below $${policies.min_project_price}`,
-        fallback_reasoning_summary: `Budget of $${amt.toFixed(0)} is below the $${policies.min_project_price} floor — held the line and proposed a smaller scope.`,
-        fallback_customer_response: `Thanks for being upfront on budget — appreciate that. The full consulting package stays at $${(policies.min_project_price + 500).toLocaleString()} so I can deliver the outcome we both want. If $${policies.min_project_price.toLocaleString()} works, I can offer a tighter scope focused on the highest-leverage piece — happy to send a one-pager.`,
+        policy_applied: `Never discount events below $${policies.min_project_price}`,
+        fallback_reasoning_summary: `Budget of $${amt.toFixed(0)} is below the $${policies.min_project_price} floor — held the line and proposed a smaller package.`,
+        fallback_customer_response: `Thanks for being upfront on budget — appreciate that. Our full-day cart package stays at $${(policies.min_project_price + 500).toLocaleString()} so we can staff and stock properly. If $${policies.min_project_price.toLocaleString()} works, I can offer a half-day setup focused on your highest-traffic window — happy to send details.`,
         fallback_owner_summary: `Held pricing floor at $${policies.min_project_price.toLocaleString()} with ${customer.name}; offered a reduced scope.`,
         revenue_delta: 0,
         counter_offer: policies.min_project_price,
+      };
+    }
+
+    case "event_inquiry": {
+      const amt = detected_amount ?? 0;
+      const hasDetails = amt > 0;
+      const askedForFields =
+        policies.event_detail_fields && policies.event_detail_fields.length > 0
+          ? policies.event_detail_fields.join(", ")
+          : "event date and address, setup time, guest count, any drink customizations, and your budget";
+      return {
+        decision: hasDetails ? "approve" : "schedule",
+        action_type: hasDetails ? "deposit_requested" : "auto_reply_sent",
+        policy_applied: "Collect event details and send deposit link to hold the date",
+        fallback_customer_response: hasDetails
+          ? `Thanks so much for reaching out — we'd love to bring the cart to your event! To hold your date, the next step is a deposit. Could you also confirm ${askedForFields}? I'll get everything confirmed once the deposit is in.`
+          : `Thanks so much for reaching out — we'd love to be there! To get your date on the calendar, I just need a few details: ${askedForFields}. Reply here and I'll follow up with next steps right away.`,
+        fallback_owner_summary: `New event inquiry from ${customer.name}${amt > 0 ? ` — $${amt.toFixed(0)} budget mentioned. Deposit link sent.` : ". Opelo asked for event details."}`,
+        fallback_reasoning_summary: `Event booking inquiry — ${hasDetails ? "sent deposit link to hold the date" : "requested missing event details"}.`,
+        revenue_delta: 0,
+        counter_offer: hasDetails ? amt : undefined,
       };
     }
 
@@ -267,7 +392,7 @@ function decide(args: DecideArgs): DecisionPlan {
           action_type: "meeting_booked",
           policy_applied: `Auto-book qualified leads above $${policies.auto_book_lead_above}`,
           fallback_reasoning_summary: `Lead with a $${amt.toFixed(0)} budget cleared your auto-book threshold — sent a confirmed time.`,
-          fallback_customer_response: `Thanks — this is exactly the kind of project I love working on. I've put you on the calendar for ${calendar.nextSlotLabel()}. You'll get an invite shortly. Looking forward.`,
+          fallback_customer_response: `Thanks — this sounds like a great fit for the cart. I've put you on the calendar for ${calendar.nextSlotLabel()}. You'll get a confirmation shortly. Looking forward to it.`,
           fallback_owner_summary: `Auto-booked $${amt.toFixed(0)} lead ${customer.name} for ${calendar.nextSlotLabel()}.`,
           revenue_delta: amt,
         };
@@ -338,15 +463,19 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     );
   }
 
-  if (plan.action_type === "discount_offered" || plan.action_type === "sponsorship_countered") {
+  if (
+    plan.action_type === "discount_offered" ||
+    plan.action_type === "sponsorship_countered"
+  ) {
     const counter = plan.counter_offer ?? 0;
     if (counter > 0) {
+      const description =
+        plan.action_type === "sponsorship_countered"
+          ? `${demoBusiness.name} — sponsorship at floor`
+          : `${demoBusiness.name} — reduced scope engagement`;
       const resp = await spongeCreatePaymentLink({
         amountCents: Math.round(counter * 100),
-        description:
-          plan.action_type === "sponsorship_countered"
-            ? `${demoBusiness.name} — sponsorship at floor`
-            : `${demoBusiness.name} — reduced scope engagement`,
+        description,
         customerEmail: customer.email,
       });
       actions.push(
@@ -355,6 +484,18 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
           `Payment link for $${counter.toLocaleString()} → ${resp.data.url}`,
         ),
       );
+    }
+  }
+
+  if (plan.action_type === "deposit_requested") {
+    const booking = await store.getBookingByCustomer(customer.id);
+    if (booking?.deposit_link) {
+      actions.push({
+        name: "sponge.payment_link.created",
+        ok: true,
+        ref: booking.id,
+        detail: `Payment link for $${((booking.deposit_amount_cents ?? 0) / 100).toLocaleString()} → ${booking.deposit_link}`,
+      });
     }
   }
 
@@ -390,12 +531,17 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     case "sms":
     case "phone_transcript": {
       const to = customer.phone || customer.email || "+15555550100";
+      const apMeta = message.metadata?.agentphone;
       actions.push(
         await agentphoneSendSMS({
           to,
           body: customer_response,
           live: isLiveCustomer && !!customer.phone,
           source_id: message.source_id,
+          agentId: apMeta?.agentId,
+          conversationId: apMeta?.conversationId,
+          numberId: apMeta?.numberId,
+          channel: apMeta?.channel,
         }),
       );
       break;
@@ -403,7 +549,7 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     case "social_dm":
     default:
       actions.push({
-        name: "social.mock.dm.replied",
+        name: "social.dm.replied",
         ok: true,
         ref: nanoid("dm"),
         detail: `DM reply queued for ${customer.name} (demo — social DM send is mocked).`,
@@ -415,10 +561,17 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     plan.action_type === "owner_escalated" ||
     plan.action_type === "refund_issued" ||
     plan.action_type === "meeting_booked" ||
+    plan.action_type === "deposit_requested" ||
+    plan.action_type === "event_confirmed" ||
     plan.action_type === "sponsorship_countered" ||
     plan.action_type === "discount_offered";
   if (notifyOwner) {
-    actions.push(await agentphoneSendOwnerUpdate(`Opelo: ${owner_summary}`));
+    const ownerMsg = buildOwnerSMS(
+      plan.action_type,
+      owner_summary,
+      customer.name,
+    );
+    actions.push(await agentphoneSendOwnerUpdate(ownerMsg));
   }
 
   const memResp = await supermemorySaveDecision({
@@ -440,4 +593,28 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
 
 function firstName(full: string): string {
   return full.split(/\s+/)[0] || full;
+}
+
+/**
+ * Compose an actionable owner SMS. Every owner update doubles as a mini
+ * decision point — the owner can text back "yes", "no", "later", or
+ * "snooze 30" and the inbound webhook will route that through
+ * owner_commands.ts.
+ */
+function buildOwnerSMS(
+  actionType: ActionType,
+  summary: string,
+  customerName: string,
+): string {
+  const replyHints: Partial<Record<ActionType, string>> = {
+    owner_escalated: `Reply "yes" to approve action, "no" to decline, or "later" to snooze.`,
+    deposit_requested: `Reply "yes" to confirm deposit received, or "later" to follow up.`,
+    meeting_booked: `Reply "yes" to confirm, "no" to cancel.`,
+    refund_issued: `Reply "no" to reverse if needed.`,
+    event_confirmed: `Reply "yes" to acknowledge, or "later" to revisit.`,
+    sponsorship_countered: `Reply "yes" to send, "no" to hold.`,
+    discount_offered: `Reply "yes" to send, "no" to hold.`,
+  };
+  const hint = replyHints[actionType] ?? `Reply "yes", "no", or "later".`;
+  return `Opelo (${customerName}): ${summary}\n\n${hint}`;
 }

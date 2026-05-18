@@ -3,6 +3,7 @@ export type Classification =
   | "pricing_exception"
   | "sponsorship_offer"
   | "qualified_lead"
+  | "event_inquiry"
   | "scheduling_request"
   | "escalation";
 
@@ -19,6 +20,9 @@ export type ActionType =
   | "sponsorship_declined"
   | "sponsorship_countered"
   | "meeting_booked"
+  | "deposit_requested"
+  | "event_confirmed"
+  | "day_of_reminder_sent"
   | "owner_escalated"
   | "lead_nurtured"
   | "auto_reply_sent";
@@ -38,6 +42,19 @@ export interface Customer {
 
 export type Channel = "email" | "sms" | "form" | "phone_transcript" | "social_dm";
 
+export interface InboundMessageMetadata {
+  agentphone?: {
+    agentId?: string;
+    conversationId?: string;
+    numberId?: string;
+    /**
+     * Upstream sub-channel ("sms" or "imessage"). Mapped down to our
+     * top-level Channel ("sms") so the cockpit shows a unified SMS column.
+     */
+    channel?: "sms" | "imessage";
+  };
+}
+
 export interface InboundMessage {
   id: string;
   customer_id: string;
@@ -49,6 +66,7 @@ export interface InboundMessage {
   amount_hint?: number | null;
   source_id?: string;
   thread_id?: string;
+  metadata?: InboundMessageMetadata;
 }
 
 export interface Policies {
@@ -59,6 +77,12 @@ export interface Policies {
   escalation_keywords: string[];
   booking_availability: string;
   auto_book_lead_above: number;
+  /**
+   * Plain-language list of details Opelo asks customers to send when an
+   * event inquiry comes in (e.g. "guest count", "setup time", "drink
+   * preferences"). Editable from the Rules page.
+   */
+  event_detail_fields: string[];
 }
 
 export interface MockExternalAction {
@@ -116,4 +140,41 @@ export interface OwnerSummary {
   period_end: string;
   text: string;
   created_at: string;
+}
+
+export interface WebhookEvent {
+  id: string;
+  provider: "agentphone" | "agentmail";
+  event_type: string;
+  payload: unknown;
+  parsed_kind?: "sms" | "call" | "email" | "unknown";
+  inserted_message_id?: string;
+  created_at: string;
+}
+
+export type BookingStage =
+  | "inquiry"
+  | "details_needed"
+  | "deposit_sent"
+  | "confirmed"
+  | "day_before"
+  | "complete";
+
+export interface Booking {
+  id: string;
+  customer_id: string;
+  customer_name: string;
+  event_date?: string;
+  event_address?: string;
+  guest_count?: number;
+  setup_time?: string;
+  drink_notes?: string;
+  day_of_contact?: string;
+  deposit_amount_cents?: number;
+  deposit_link?: string;
+  deposit_paid: boolean;
+  stage: BookingStage;
+  message_id: string;
+  created_at: string;
+  updated_at: string;
 }

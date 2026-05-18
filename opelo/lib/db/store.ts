@@ -2,15 +2,20 @@ import { promises as fs } from "fs";
 import path from "path";
 import {
   ActionRecord,
+  Booking,
   CompanyWallet,
   Customer,
   InboundMessage,
   OwnerSummary,
   Policies,
+  WebhookEvent,
 } from "../types";
+import { nanoid } from "../integrations/util";
+import { demoBusiness } from "../business";
 import {
   defaultPolicies,
   seedActions,
+  seedBookings,
   seedCustomers,
   seedMessages,
   seedPendingInbound,
@@ -28,6 +33,8 @@ interface Snapshot {
   owner_summaries: OwnerSummary[];
   pending_inbound: InboundMessage[];
   wallet: CompanyWallet;
+  webhook_events: WebhookEvent[];
+  bookings: Booking[];
 }
 
 let cache: Snapshot | null = null;
@@ -42,6 +49,8 @@ function initial(): Snapshot {
     owner_summaries: [],
     pending_inbound: seedPendingInbound(),
     wallet: seedWallet(),
+    webhook_events: [],
+    bookings: seedBookings(),
   };
 }
 
@@ -61,6 +70,8 @@ async function readSnapshot(): Promise<Snapshot> {
     if (!cache.owner_summaries) cache.owner_summaries = [];
     if (!cache.pending_inbound) cache.pending_inbound = seedPendingInbound();
     if (!cache.wallet) cache.wallet = seedWallet();
+    if (!cache.webhook_events) cache.webhook_events = [];
+    if (!cache.bookings) cache.bookings = seedBookings();
     return cache;
   } catch {
     cache = initial();
@@ -89,6 +100,20 @@ async function withLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export const store = {
+  /**
+   * Single-business helpers — we only support one business profile in this
+   * build. Read-through to demoBusiness + BUSINESS_DESCRIPTION env so the
+   * dashboard can present an editable identity without a separate table.
+   */
+  async getBusinessName(): Promise<string> {
+    return demoBusiness.name;
+  },
+  async getBusinessDescription(): Promise<string> {
+    return (
+      process.env.BUSINESS_DESCRIPTION?.trim() ||
+      `${demoBusiness.name} — operated by ${demoBusiness.ownerName}.`
+    );
+  },
   async getPolicies(): Promise<Policies> {
     const snap = await readSnapshot();
     return snap.policies;
@@ -224,6 +249,54 @@ export const store = {
       return snap.wallet;
     });
   },
+  async addWebhookEvent(
+    event: Omit<WebhookEvent, "id" | "created_at"> & {
+      id?: string;
+      created_at?: string;
+    },
+  ): Promise<WebhookEvent> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      const full: WebhookEvent = {
+        id: event.id ?? nanoid("wh"),
+        created_at: event.created_at ?? new Date().toISOString(),
+        provider: event.provider,
+        event_type: event.event_type,
+        payload: event.payload,
+        parsed_kind: event.parsed_kind,
+        inserted_message_id: event.inserted_message_id,
+      };
+      snap.webhook_events.unshift(full);
+      // Cap to last 200 to keep the store readable.
+      if (snap.webhook_events.length > 200) {
+        snap.webhook_events.length = 200;
+      }
+      await persist();
+      return full;
+    });
+  },
+  async updateWebhookEvent(
+    id: string,
+    patch: Partial<Pick<WebhookEvent, "parsed_kind" | "inserted_message_id">>,
+  ): Promise<WebhookEvent | null> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      const e = snap.webhook_events.find((w) => w.id === id);
+      if (!e) return null;
+      if (patch.parsed_kind !== undefined) e.parsed_kind = patch.parsed_kind;
+      if (patch.inserted_message_id !== undefined)
+        e.inserted_message_id = patch.inserted_message_id;
+      await persist();
+      return e;
+    });
+  },
+  async listWebhookEvents(provider?: string): Promise<WebhookEvent[]> {
+    const snap = await readSnapshot();
+    const events = provider
+      ? snap.webhook_events.filter((e) => e.provider === provider)
+      : snap.webhook_events;
+    return [...events];
+  },
   async dequeueNextPending(): Promise<InboundMessage | null> {
     return withLock(async () => {
       const snap = await readSnapshot();
@@ -244,6 +317,44 @@ export const store = {
     return withLock(async () => {
       cache = initial();
       await persist();
+    });
+  },
+  async listBookings(): Promise<Booking[]> {
+    const snap = await readSnapshot();
+    return [...snap.bookings].sort((a, b) => {
+      const da = a.event_date ?? "";
+      const db = b.event_date ?? "";
+      if (da && db && da !== db) return da.localeCompare(db);
+      return b.updated_at.localeCompare(a.updated_at);
+    });
+  },
+  async getBooking(id: string): Promise<Booking | undefined> {
+    const snap = await readSnapshot();
+    return snap.bookings.find((b) => b.id === id);
+  },
+  async getBookingByCustomer(customerId: string): Promise<Booking | undefined> {
+    const snap = await readSnapshot();
+    return snap.bookings.find((b) => b.customer_id === customerId);
+  },
+  async addBooking(booking: Booking): Promise<Booking> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      snap.bookings.unshift(booking);
+      await persist();
+      return booking;
+    });
+  },
+  async updateBooking(
+    id: string,
+    patch: Partial<Booking>,
+  ): Promise<Booking | null> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      const b = snap.bookings.find((x) => x.id === id);
+      if (!b) return null;
+      Object.assign(b, patch, { updated_at: new Date().toISOString() });
+      await persist();
+      return b;
     });
   },
 };
