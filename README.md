@@ -2,6 +2,8 @@
 
 **AI middle management for one-person businesses.**
 
+🔗 **[Try it out →](https://opelo-yc-hackathon-git-github-updates-pgirl-6399s-projects.vercel.app/)**
+
 Opelo is an AI agent that runs your business operations so you can focus on your work. Customers text or call your number — Opelo handles the conversation, makes a decision based on your rules, and takes action — all without bothering you.
 
 ---
