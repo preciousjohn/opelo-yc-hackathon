@@ -1,4 +1,4 @@
-import { Customer, InboundMessage } from "../types";
+import { ActionRecord, Customer, InboundMessage } from "../types";
 import { store } from "../db/store";
 import {
   ParsedCall,
@@ -7,8 +7,11 @@ import {
   normalizeInboundCall,
   normalizeInboundSMS,
   sendOwnerUpdate,
+  sendDirectSMS,
 } from "./agentphone";
 import { isFromOwner, parseOwnerCommand } from "./owner_commands";
+import { processInboundMessage } from "../ai/manager";
+import { nanoid } from "./util";
 
 export interface AgentPhoneIngestResult {
   ok: boolean;
@@ -18,6 +21,8 @@ export interface AgentPhoneIngestResult {
   message?: InboundMessage;
   customer?: Customer;
   event_type?: string;
+  auto_processed?: boolean;
+  reply_sent?: boolean;
 }
 
 /**
@@ -113,6 +118,59 @@ async function ingestSMS(
   };
   const { inserted, message: stored } = await store.addMessage(message);
 
+  let auto_processed = false;
+  let reply_sent = false;
+
+  // Auto-process the message and send a conversational reply
+  if (inserted) {
+    try {
+      const policies = await store.getPolicies();
+      await store.updateMessageStatus(messageId, "processing");
+      
+      const result = await processInboundMessage(stored, policies, customer, {
+        useLLM: true,
+      });
+      
+      // Record the action
+      const actionRecord: ActionRecord = {
+        id: nanoid("act"),
+        message_id: stored.id,
+        customer_id: customer.id,
+        classification: result.classification,
+        decision: result.decision,
+        policy_applied: result.policy_applied,
+        reasoning_summary: result.reasoning_summary,
+        customer_response: result.customer_response,
+        owner_summary: result.owner_summary,
+        action_type: result.action_type,
+        mock_external_actions: result.mock_external_actions,
+        revenue_delta: result.revenue_delta,
+        counter_offer: result.counter_offer,
+        llm_used: result.llm_used,
+        created_at: new Date().toISOString(),
+      };
+      await store.addAction(actionRecord);
+      await store.updateMessageStatus(messageId, "handled");
+      auto_processed = true;
+      
+      // Send the reply back via SMS using the same conversation thread
+      if (customer.phone && result.customer_response) {
+        const sendResult = await sendDirectSMS({
+          to: customer.phone,
+          body: result.customer_response,
+          agentId: parsed.agentId,
+          conversationId: parsed.conversationId,
+          numberId: parsed.numberId,
+        });
+        reply_sent = sendResult.ok;
+        console.log("[opelo.auto_reply] SMS reply sent to", customer.phone, "ok:", sendResult.ok);
+      }
+    } catch (err) {
+      console.error("[opelo.auto_process] failed to process SMS:", err);
+      await store.updateMessageStatus(messageId, "new");
+    }
+  }
+
   return {
     ok: true,
     inserted,
@@ -121,6 +179,8 @@ async function ingestSMS(
     message: stored,
     customer,
     event_type: parsed.event_type || event_type,
+    auto_processed,
+    reply_sent,
   };
 }
 
@@ -192,6 +252,56 @@ async function ingestCall(
   };
   const { inserted, message: stored } = await store.addMessage(message);
 
+  let auto_processed = false;
+  let reply_sent = false;
+
+  // Auto-process call transcripts and send a follow-up SMS
+  if (inserted && parsed.transcript.trim()) {
+    try {
+      const policies = await store.getPolicies();
+      await store.updateMessageStatus(messageId, "processing");
+      
+      const result = await processInboundMessage(stored, policies, customer, {
+        useLLM: true,
+      });
+      
+      // Record the action
+      const actionRecord: ActionRecord = {
+        id: nanoid("act"),
+        message_id: stored.id,
+        customer_id: customer.id,
+        classification: result.classification,
+        decision: result.decision,
+        policy_applied: result.policy_applied,
+        reasoning_summary: result.reasoning_summary,
+        customer_response: result.customer_response,
+        owner_summary: result.owner_summary,
+        action_type: result.action_type,
+        mock_external_actions: result.mock_external_actions,
+        revenue_delta: result.revenue_delta,
+        counter_offer: result.counter_offer,
+        llm_used: result.llm_used,
+        created_at: new Date().toISOString(),
+      };
+      await store.addAction(actionRecord);
+      await store.updateMessageStatus(messageId, "handled");
+      auto_processed = true;
+      
+      // Send the reply as a follow-up SMS after the call
+      if (customer.phone && result.customer_response) {
+        const sendResult = await sendDirectSMS({
+          to: customer.phone,
+          body: `Following up on our call:\n\n${result.customer_response}`,
+        });
+        reply_sent = sendResult.ok;
+        console.log("[opelo.auto_reply] Call follow-up SMS sent to", customer.phone, "ok:", sendResult.ok);
+      }
+    } catch (err) {
+      console.error("[opelo.auto_process] failed to process call:", err);
+      await store.updateMessageStatus(messageId, "new");
+    }
+  }
+
   return {
     ok: true,
     inserted,
@@ -200,6 +310,8 @@ async function ingestCall(
     message: stored,
     customer,
     event_type: parsed.event_type || event_type,
+    auto_processed,
+    reply_sent,
   };
 }
 
