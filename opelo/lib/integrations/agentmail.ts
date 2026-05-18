@@ -300,7 +300,7 @@ export const agentmail = {
     // Mock path: no key, OR caller didn't mark this as a real customer.
     if (!hasKey || !input.live) {
       return {
-        name: "agentmail.reply",
+        name: hasKey ? "agentmail.mock.reply" : "agentmail.mock.reply",
         ok: true,
         ref: nanoid("am"),
         detail: `Replied to ${input.to} — "${input.subject}" (demo${hasKey ? " — seeded customer, real send skipped" : ""}).`,

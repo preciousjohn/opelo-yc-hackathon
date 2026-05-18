@@ -184,11 +184,16 @@ async function callAgentPhone(input: SendSMSInput): Promise<SendOutcome> {
     body: input.body,
   };
   if (numberId) primaryPayload.number_id = numberId;
+  // shared-imessage lines require conversation_id in the body to send replies
+  if (input.conversationId) primaryPayload.conversation_id = input.conversationId;
 
-  // PRIORITY 1: thread the reply into the same conversation when we know it.
-  // This keeps the customer's view of the thread intact rather than starting
-  // a fresh message. AgentPhone may return 405 if their tenant only exposes
-  // GET on this path; the loop falls through to /messages below.
+  // 1) Primary — POST /messages with number_id when known.
+  attempts.push({ url: `${base}/messages`, payload: primaryPayload });
+
+  // 2) Fallback — POST /messages/send (same body shape)
+  attempts.push({ url: `${base}/messages/send`, payload: primaryPayload });
+
+  // 3) Fallback — POST /conversations/{conversationId}/messages
   if (input.conversationId) {
     attempts.push({
       url: `${base}/conversations/${encodeURIComponent(input.conversationId)}/messages`,
@@ -196,14 +201,7 @@ async function callAgentPhone(input: SendSMSInput): Promise<SendOutcome> {
     });
   }
 
-  // PRIORITY 2: agent-routed send. AgentPhone threads automatically by
-  // (agent_id, number_id, to_number) so this still lands in the right
-  // conversation even if PRIORITY 1 doesn't fire.
-  attempts.push({ url: `${base}/messages`, payload: primaryPayload });
-  attempts.push({ url: `${base}/messages/send`, payload: primaryPayload });
-
-  // PRIORITY 3: env override path — tried FIRST when set so users can pin a
-  // specific tenant endpoint without code changes.
+  // Optional: explicit override via env. Tried first when set.
   const overridePath = process.env.AGENTPHONE_SEND_PATH?.trim();
   if (overridePath) {
     const overrideUrl = overridePath.startsWith("http")
@@ -270,96 +268,10 @@ async function callAgentPhone(input: SendSMSInput): Promise<SendOutcome> {
     ok: false,
     action: "agentphone.sms.failed",
     ref: nanoid("ap"),
-    detail: `Customer reply to ${to} failed (last: ${lastError ?? "unknown"}). Tried ${attempted.length} URL${attempted.length === 1 ? "" : "s"}.`,
+    detail: `All AgentPhone send endpoints failed (last: ${lastError ?? "unknown"}). Tried ${attempted.length} URL${attempted.length === 1 ? "" : "s"}.`,
     mode: "live",
     attempted_endpoints: attempted,
     hint: "Check AgentPhone messages endpoint and AGENTPHONE_AGENT_ID. Set AGENTPHONE_FORCE_MOCK_SEND=true to mock during a demo.",
-  };
-}
-
-/**
- * Owner-only outbound SMS. Sends to a personal number with no agent_id /
- * number_id / conversationId — so it does NOT create or pollute a customer
- * conversation thread. Tries /sms/send first (direct outbound), falls back
- * to /messages for tenants that bill all sends through the messages API.
- */
-async function callDirectSMS(to: string, body: string): Promise<SendOutcome> {
-  const key = process.env.AGENTPHONE_API_KEY!;
-  const base = baseUrl();
-  const ref = nanoid("ap");
-
-  const attempts: EndpointAttempt[] = [
-    {
-      url: `${base}/sms/send`,
-      payload: {
-        to,
-        body,
-        from: process.env.AGENTPHONE_NUMBER,
-      },
-    },
-    {
-      url: `${base}/messages`,
-      payload: {
-        to_number: to,
-        body,
-        // AgentPhone /messages requires agent_id+number_id to route on
-        // shared-imessage tenants. `to_number` is the OWNER's personal
-        // phone (not a customer), so the conversation AgentPhone creates is
-        // a separate owner⇄agent thread — it never enters any customer's
-        // conversation thread. This is what makes the owner alert actually
-        // deliver while preserving the customer-thread invariant.
-        agent_id: agentIdFromEnvOr(),
-        number_id: numberIdFromEnvOr(),
-      },
-    },
-  ];
-
-  const attempted: AttemptedEndpoint[] = [];
-  let lastError: string | undefined;
-
-  for (const a of attempts) {
-    try {
-      const resp = await fetch(a.url, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${key}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(a.payload),
-      });
-      const bodyText = await resp.text().catch(() => "");
-      attempted.push({
-        url: a.url,
-        method: "POST",
-        status: resp.status,
-        body_preview: bodyText.slice(0, 200) || undefined,
-      });
-      if (resp.ok) {
-        return {
-          ok: true,
-          action: "agentphone.owner_sms.sent",
-          ref,
-          detail: `Owner SMS sent to ${to}: ${preview(body)}`,
-          mode: "live",
-          attempted_endpoints: attempted,
-        };
-      }
-      lastError = `${resp.status} ${resp.statusText}`;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "network_error";
-      attempted.push({ url: a.url, method: "POST", status: null, error: msg });
-      lastError = msg;
-    }
-  }
-
-  return {
-    ok: false,
-    action: "agentphone.owner_sms.failed",
-    ref,
-    detail: `Owner SMS failed to ${to}. Last error: ${lastError ?? "unknown"}.`,
-    mode: "live",
-    attempted_endpoints: attempted,
-    hint: "Owner SMS uses direct send, not agent routing. Check /sms/send endpoint or AGENTPHONE_NUMBER.",
   };
 }
 
@@ -377,7 +289,7 @@ export async function sendSMS(
         ? "AGENTPHONE_FORCE_MOCK_SEND=true"
         : "seeded customer";
     return {
-      name: "agentphone.sms.sent",
+      name: "agentphone.mock.sms.sent",
       ok: true,
       ref: nanoid("ap"),
       detail: `Sent SMS to ${input.to}: ${preview(input.body)} (demo — ${why}).`,
@@ -399,19 +311,24 @@ export async function sendOwnerUpdate(
   const hasKey = !inMockMode();
   const forceMock = forceMockSendEnabled();
   if (!hasKey || !owner || !looksLikePhone(owner) || forceMock) {
+    const fallback = owner || "+15555550123";
+    const why = !hasKey
+      ? "no AGENTPHONE_API_KEY"
+      : forceMock
+        ? "AGENTPHONE_FORCE_MOCK_SEND=true"
+        : !owner
+          ? "OWNER_PHONE_NUMBER missing"
+          : "OWNER_PHONE_NUMBER looks synthetic";
     return {
-      name: "agentphone.owner_sms.sent",
+      name: "agentphone.mock.owner_update.sent",
       ok: true,
       ref: nanoid("ap"),
-      detail: `Owner notified: ${preview(message)}`,
+      detail: `SMS to owner ${fallback}: ${preview(message)} (demo — ${why}).`,
     };
   }
-  // IMPORTANT: route through callDirectSMS, NOT callAgentPhone. Owner updates
-  // go to a personal number and must not be threaded through the agent's
-  // customer conversations.
-  const outcome = await callDirectSMS(owner, message);
+  const outcome = await callAgentPhone({ to: owner, body: message, live: true });
   return {
-    name: outcome.action,
+    name: outcome.ok ? "agentphone.owner_update.sent" : outcome.action,
     ok: outcome.ok,
     ref: outcome.ref,
     detail: outcome.detail,

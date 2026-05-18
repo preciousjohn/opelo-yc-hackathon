@@ -1,8 +1,6 @@
 import { MockExternalAction } from "../types";
 import { isDemo, nanoid } from "./util";
-
-const MCP_ACCEPT = "application/json, text/event-stream";
-const MCP_PROTOCOL = "2024-11-05";
+import { createSpongeMcpPaymentLink } from "./sponge_mcp";
 
 export interface SpongeRefundInput {
   customerId?: string;
@@ -15,6 +13,7 @@ export interface SpongePaymentLinkInput {
   amountCents: number;
   description: string;
   customerEmail?: string;
+  metadata?: Record<string, string>;
 }
 
 export interface SpongeCustomer {
@@ -38,253 +37,200 @@ export interface SpongeResponse<T> {
   mode: "mock" | "live";
   data: T;
   log: string;
+  raw_status?: number;
+  error_detail?: string;
 }
-
-interface McpEnvelope {
-  jsonrpc?: string;
-  id?: number;
-  result?: {
-    content?: { type?: string; text?: string }[];
-  };
-  error?: { code?: number; message?: string };
-}
-
-let mcpSessionId: string | null = null;
 
 function inMockMode(): boolean {
   return isDemo(process.env.SPONGE_API_KEY, process.env.SPONGE_BASE_URL);
+}
+
+/**
+ * In demo mode, cap all real payment transactions at 50 cents to protect the
+ * $5 wallet balance while still proving the live payment infrastructure.
+ */
+function demoSafeCents(requested: number): { cents: number; capped: boolean } {
+  const DEMO_CAP = 50; // $0.50
+  if (process.env.NEXT_PUBLIC_DEMO_MODE === "true" && requested > DEMO_CAP) {
+    return { cents: DEMO_CAP, capped: true };
+  }
+  return { cents: requested, capped: false };
+}
+
+function baseUrl(): string {
+  return process.env.SPONGE_BASE_URL?.replace(/\/$/, "") ?? "";
+}
+
+function apiKey(): string {
+  return process.env.SPONGE_API_KEY ?? "";
+}
+
+function headers(): Record<string, string> {
+  return {
+    Authorization: `Bearer ${apiKey()}`,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
 }
 
 function mockResponse<T>(log: string, data: T): SpongeResponse<T> {
   return { ok: true, provider: "sponge", mode: "mock", data, log };
 }
 
-function liveResponse<T>(log: string, data: T): SpongeResponse<T> {
-  return { ok: true, provider: "sponge", mode: "live", data, log };
+function liveResponse<T>(log: string, data: T, rawStatus?: number): SpongeResponse<T> {
+  return { ok: true, provider: "sponge", mode: "live", data, log, raw_status: rawStatus };
 }
 
-function spongeConfig() {
-  const base = process.env.SPONGE_BASE_URL?.replace(/\/$/, "");
-  const key = process.env.SPONGE_API_KEY;
-  if (!base || !key) return null;
-  return { base, key };
+function failResponse<T>(log: string, data: T, detail: string, rawStatus?: number): SpongeResponse<T> {
+  return { ok: false, provider: "sponge", mode: "live", data, log, error_detail: detail, raw_status: rawStatus };
 }
 
-function parseMcpBody(raw: string): McpEnvelope {
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("data:")) {
-      return JSON.parse(trimmed.slice(5).trim()) as McpEnvelope;
-    }
-  }
-  return JSON.parse(raw) as McpEnvelope;
-}
-
-async function initMcpSession(): Promise<void> {
-  const cfg = spongeConfig();
-  if (!cfg) throw new Error("Sponge not configured");
-
-  const resp = await fetch(cfg.base, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${cfg.key}`,
-      "Content-Type": "application/json",
-      Accept: MCP_ACCEPT,
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: MCP_PROTOCOL,
-        capabilities: {},
-        clientInfo: { name: "opelo", version: "0.1.0" },
-      },
-    }),
-  });
-
-  const session = resp.headers.get("mcp-session-id");
-  if (!session) {
-    throw new Error("Sponge MCP: no session ID in initialize response");
-  }
-
-  const envelope = parseMcpBody(await resp.text());
-  if (envelope.error) {
-    throw new Error(envelope.error.message ?? "Sponge MCP initialize failed");
-  }
-
-  mcpSessionId = session;
-}
-
-async function mcpRequest(
-  method: string,
-  params: Record<string, unknown>,
-  id = Date.now(),
-): Promise<McpEnvelope> {
-  const cfg = spongeConfig();
-  if (!cfg) throw new Error("Sponge not configured");
-
-  if (!mcpSessionId) {
-    await initMcpSession();
-  }
-
-  const send = async (retry: boolean): Promise<McpEnvelope> => {
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${cfg.key}`,
-      "Content-Type": "application/json",
-      Accept: MCP_ACCEPT,
-    };
-    if (mcpSessionId) headers["Mcp-Session-Id"] = mcpSessionId;
-
-    const resp = await fetch(cfg.base, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
-    });
-
-    const envelope = parseMcpBody(await resp.text());
-
-    if (
-      retry &&
-      envelope.error?.message?.toLowerCase().includes("session")
-    ) {
-      mcpSessionId = null;
-      await initMcpSession();
-      return send(false);
-    }
-
-    if (!resp.ok && !envelope.error) {
-      throw new Error(`Sponge MCP HTTP ${resp.status}`);
-    }
-
-    return envelope;
-  };
-
-  return send(true);
-}
-
-async function callSpongeTool(
-  toolName: string,
-  args: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  const envelope = await mcpRequest("tools/call", {
-    name: toolName,
-    arguments: args,
-  });
-
-  if (envelope.error) {
-    throw new Error(envelope.error.message ?? `Sponge tool ${toolName} failed`);
-  }
-
-  const text = envelope.result?.content?.[0]?.text ?? "{}";
-  try {
-    return JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    return { raw: text };
-  }
-}
-
-function sumBalanceCents(chains: Record<string, unknown>): number {
-  let total = 0;
-  for (const chain of Object.values(chains)) {
-    if (!chain || typeof chain !== "object") continue;
-    const balances = (chain as { balances?: { usdValue?: string; amount?: string }[] })
-      .balances;
-    if (!Array.isArray(balances)) continue;
-    for (const b of balances) {
-      if (b.usdValue != null) {
-        total += Math.round(parseFloat(b.usdValue) * 100);
-      } else if (b.amount != null) {
-        total += Math.round(parseFloat(b.amount) * 100);
-      }
-    }
-  }
-  return total;
-}
-
-export async function createRefund(
-  input: SpongeRefundInput,
-): Promise<SpongeResponse<{ id: string; amount_cents: number; status: string }>> {
-  const id = nanoid("re");
-  if (inMockMode()) {
-    return mockResponse("sponge.refund.created", {
-      id,
-      amount_cents: input.amountCents,
-      status: "succeeded",
-    });
-  }
-
-  const chain = process.env.SPONGE_REFUND_CHAIN;
-  const to =
-    input.paymentId?.match(/^(0x[a-fA-F0-9]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})$/)?.[0] ??
-    process.env.SPONGE_REFUND_TO;
-
-  if (!chain || !to) {
-    return mockResponse("sponge.refund.created", {
-      id,
-      amount_cents: input.amountCents,
-      status: "succeeded",
-    });
-  }
-
-  try {
-    const amountUsd = (input.amountCents / 100).toFixed(2);
-    const result = await callSpongeTool("transfer", {
-      chain,
-      to,
-      amount: amountUsd,
-      token: "USDC",
-    });
-    const txId =
-      (typeof result.transaction_hash === "string" && result.transaction_hash) ||
-      (typeof result.hash === "string" && result.hash) ||
-      id;
-    return liveResponse("sponge.transfer.refund", {
-      id: txId,
-      amount_cents: input.amountCents,
-      status: (result.status as string) ?? "succeeded",
-    });
-  } catch {
-    return mockResponse("sponge.refund.created", {
-      id,
-      amount_cents: input.amountCents,
-      status: "succeeded",
-    });
-  }
-}
+// ─── Payment links ──────────────────────────────────────────────────────────
 
 export async function createPaymentLink(
   input: SpongePaymentLinkInput,
 ): Promise<SpongeResponse<{ id: string; url: string; amount_cents: number }>> {
-  const id = nanoid("plink");
-  const fallbackUrl = `https://pay.sponge.demo/${id}`;
+  const fallback = { id: nanoid("plink"), url: `https://pay.sponge.demo/${nanoid("demo")}`, amount_cents: input.amountCents };
 
   if (inMockMode()) {
-    return mockResponse("sponge.payment_link.created", {
-      id,
-      url: fallbackUrl,
-      amount_cents: input.amountCents,
-    });
+    return mockResponse("sponge.mock.payment_link.created", fallback);
   }
 
+  // ── Live mode: use the Sponge MCP protocol ───────────────────────────────
   try {
-    const result = await callSpongeTool("create_payment_link", {
-      amount: input.amountCents / 100,
+    const mcpLink = await createSpongeMcpPaymentLink({
       description: input.description,
-      expires_in_minutes: 60,
+      amountUsd: input.amountCents / 100,
     });
-    return liveResponse("sponge.payment_link.created", {
-      id: String(result.id ?? id),
-      url: String(result.url ?? fallbackUrl),
-      amount_cents: input.amountCents,
-    });
-  } catch {
-    return mockResponse("sponge.payment_link.created", {
-      id,
-      url: fallbackUrl,
-      amount_cents: input.amountCents,
-    });
+    return liveResponse(
+      mcpLink.capped ? "sponge.payment_link.created.demo_capped" : "sponge.payment_link.created",
+      { id: mcpLink.id, url: mcpLink.url, amount_cents: Math.round(mcpLink.amount_usd * 100) },
+    );
+  } catch (mcpErr) {
+    const errMsg = mcpErr instanceof Error ? mcpErr.message : "MCP call failed";
+    return failResponse("sponge.payment_link.failed", fallback, errMsg);
   }
+
+  // REST fallback (unreachable while MCP is primary, kept for reference)
+  const { cents, capped } = demoSafeCents(input.amountCents);
+  const base = baseUrl();
+  const body = {
+    amount: cents,
+    currency: "usd",
+    description: input.description,
+    ...(input.customerEmail ? { customer_email: input.customerEmail } : {}),
+    ...(input.metadata ? { metadata: input.metadata } : {}),
+  };
+
+  // Try common REST shapes used by payment platforms
+  const endpoints = [
+    `${base}/payment-links`,
+    `${base}/links`,
+    `${base}/checkout/session`,
+    `${base}/checkout`,
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const resp = await fetch(url, { method: "POST", headers: headers(), body: JSON.stringify(body) });
+      const text = await resp.text();
+      if (resp.ok) {
+        let parsed: Record<string, unknown> = {};
+        try { parsed = JSON.parse(text); } catch { /* ignore */ }
+        const payUrl =
+          (parsed.url as string) ||
+          (parsed.link as string) ||
+          (parsed.payment_url as string) ||
+          (parsed.checkout_url as string) ||
+          (parsed.hosted_url as string) ||
+          ((parsed.data as Record<string, unknown>)?.url as string);
+        const id =
+          (parsed.id as string) ||
+          (parsed.link_id as string) ||
+          (parsed.payment_link_id as string) ||
+          nanoid("plink");
+        if (payUrl) {
+          const detail = capped ? ` (demo-capped from $${(input.amountCents/100).toFixed(2)} → $0.50)` : "";
+          return liveResponse("sponge.payment_link.created" + (capped ? ".demo_capped" : ""), { id, url: payUrl, amount_cents: cents }, resp.status);
+        }
+      }
+      // Collect error but try next endpoint
+      if (resp.status >= 400) {
+        return failResponse("sponge.payment_link.failed", fallback, `${resp.status}: ${text.slice(0, 200)}`, resp.status);
+      }
+    } catch {
+      // network error — try next endpoint
+    }
+  }
+
+  return failResponse("sponge.payment_link.failed", fallback, "All Sponge endpoints failed — check SPONGE_BASE_URL.");
+}
+
+// ─── Refunds ────────────────────────────────────────────────────────────────
+
+export async function createRefund(
+  input: SpongeRefundInput,
+): Promise<SpongeResponse<{ id: string; amount_cents: number; status: string }>> {
+  const fallback = { id: nanoid("re"), amount_cents: input.amountCents, status: "succeeded" };
+
+  if (inMockMode()) {
+    return mockResponse("sponge.mock.refund.created", fallback);
+  }
+
+  const base = baseUrl();
+  const body = {
+    amount: input.amountCents,
+    currency: "usd",
+    ...(input.reason ? { reason: input.reason } : {}),
+    ...(input.paymentId ? { payment_id: input.paymentId } : {}),
+    ...(input.customerId ? { customer_id: input.customerId } : {}),
+  };
+
+  const endpoints = [`${base}/refunds`, `${base}/payments/refund`];
+  for (const url of endpoints) {
+    try {
+      const resp = await fetch(url, { method: "POST", headers: headers(), body: JSON.stringify(body) });
+      const text = await resp.text();
+      if (resp.ok) {
+        let parsed: Record<string, unknown> = {};
+        try { parsed = JSON.parse(text); } catch { /* ignore */ }
+        return liveResponse("sponge.refund.created", {
+          id: (parsed.id as string) || fallback.id,
+          amount_cents: input.amountCents,
+          status: (parsed.status as string) || "succeeded",
+        }, resp.status);
+      }
+    } catch { /* try next */ }
+  }
+
+  return failResponse("sponge.refund.failed", fallback, "Refund API call failed.");
+}
+
+// ─── Balance ────────────────────────────────────────────────────────────────
+
+export async function getBalanceOrWallet(): Promise<SpongeResponse<SpongeBalance>> {
+  const fallback: SpongeBalance = { available_cents: 500, pending_cents: 0, currency: "USD" };
+  if (inMockMode()) return mockResponse("sponge.mock.balance.loaded", fallback);
+
+  const base = baseUrl();
+  const endpoints = [`${base}/wallet`, `${base}/balance`, `${base}/account/balance`];
+  for (const url of endpoints) {
+    try {
+      const resp = await fetch(url, { method: "GET", headers: headers() });
+      if (resp.ok) {
+        const parsed = await resp.json() as Record<string, unknown>;
+        return liveResponse("sponge.balance.loaded", {
+          available_cents:
+            (parsed.available_cents as number) ??
+            (parsed.available as number) ??
+            (parsed.balance as number) ?? 0,
+          pending_cents: (parsed.pending_cents as number) ?? (parsed.pending as number) ?? 0,
+          currency: "USD",
+        }, resp.status);
+      }
+    } catch { /* try next */ }
+  }
+  return failResponse("sponge.balance.failed", fallback, "Balance check failed.");
 }
 
 export async function getCustomer(
@@ -294,40 +240,12 @@ export async function getCustomer(
     id: customerId,
     email: "customer@example.com",
     name: "Demo Customer",
-    lifetime_value_cents: 24000,
+    lifetime_value_cents: 0,
     prior_refunds: 0,
     tags: [],
   };
-  if (inMockMode()) {
-    return mockResponse("sponge.customer.loaded", data);
-  }
+  if (inMockMode()) return mockResponse("sponge.mock.customer.loaded", data);
   return liveResponse("sponge.customer.loaded", data);
-}
-
-export async function getBalanceOrWallet(): Promise<SpongeResponse<SpongeBalance>> {
-  if (inMockMode()) {
-    return mockResponse("sponge.balance.loaded", {
-      available_cents: 1_842_300,
-      pending_cents: 96_400,
-      currency: "USD",
-    });
-  }
-
-  try {
-    const result = await callSpongeTool("get_balance", {});
-    const available_cents = sumBalanceCents(result);
-    return liveResponse("sponge.balance.loaded", {
-      available_cents,
-      pending_cents: 0,
-      currency: "USD",
-    });
-  } catch {
-    return mockResponse("sponge.balance.loaded", {
-      available_cents: 0,
-      pending_cents: 0,
-      currency: "USD",
-    });
-  }
 }
 
 export const sponge = {

@@ -1,8 +1,5 @@
-import { ActionRecord, Customer, InboundMessage } from "../types";
+import { Customer, InboundMessage } from "../types";
 import { store } from "../db/store";
-import { processInboundMessage } from "../ai/manager";
-import { agentmail } from "./agentmail";
-import { nanoid } from "./util";
 
 export interface IngestResult {
   ok: boolean;
@@ -11,8 +8,6 @@ export interface IngestResult {
   message?: InboundMessage;
   customer?: Customer;
   event_type?: string;
-  auto_processed?: boolean;
-  reply_sent?: boolean;
 }
 
 /**
@@ -115,61 +110,6 @@ export async function ingestAgentMailWebhook(
 
   const { inserted, message: stored } = await store.addMessage(inbound);
 
-  let auto_processed = false;
-  let reply_sent = false;
-
-  // Auto-process the email and send a conversational reply
-  if (inserted) {
-    try {
-      const policies = await store.getPolicies();
-      await store.updateMessageStatus(messageId, "processing");
-      
-      const result = await processInboundMessage(stored, policies, customer, {
-        useLLM: true,
-      });
-      
-      // Record the action
-      const actionRecord: ActionRecord = {
-        id: nanoid("act"),
-        message_id: stored.id,
-        customer_id: customer.id,
-        classification: result.classification,
-        decision: result.decision,
-        policy_applied: result.policy_applied,
-        reasoning_summary: result.reasoning_summary,
-        customer_response: result.customer_response,
-        owner_summary: result.owner_summary,
-        action_type: result.action_type,
-        mock_external_actions: result.mock_external_actions,
-        revenue_delta: result.revenue_delta,
-        counter_offer: result.counter_offer,
-        llm_used: result.llm_used,
-        created_at: new Date().toISOString(),
-      };
-      await store.addAction(actionRecord);
-      await store.updateMessageStatus(messageId, "handled");
-      auto_processed = true;
-      
-      // Send the reply back via email in the same thread
-      if (customer.email && result.customer_response) {
-        const replySubject = subject.startsWith("Re:") ? subject : `Re: ${subject}`;
-        const sendResult = await agentmail.sendReply({
-          to: customer.email,
-          subject: replySubject,
-          body: result.customer_response,
-          source_id,
-          thread_id,
-          live: true,
-        });
-        reply_sent = sendResult.ok;
-        console.log("[opelo.auto_reply] Email reply sent to", customer.email, "ok:", sendResult.ok);
-      }
-    } catch (err) {
-      console.error("[opelo.auto_process] failed to process email:", err);
-      await store.updateMessageStatus(messageId, "new");
-    }
-  }
-
   return {
     ok: true,
     inserted,
@@ -177,8 +117,6 @@ export async function ingestAgentMailWebhook(
     message: stored,
     customer,
     event_type,
-    auto_processed,
-    reply_sent,
   };
 }
 

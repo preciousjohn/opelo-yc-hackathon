@@ -3,7 +3,6 @@ export type Classification =
   | "pricing_exception"
   | "sponsorship_offer"
   | "qualified_lead"
-  | "event_inquiry"
   | "scheduling_request"
   | "escalation";
 
@@ -20,9 +19,6 @@ export type ActionType =
   | "sponsorship_declined"
   | "sponsorship_countered"
   | "meeting_booked"
-  | "deposit_requested"
-  | "event_confirmed"
-  | "day_of_reminder_sent"
   | "owner_escalated"
   | "lead_nurtured"
   | "auto_reply_sent";
@@ -77,12 +73,6 @@ export interface Policies {
   escalation_keywords: string[];
   booking_availability: string;
   auto_book_lead_above: number;
-  /**
-   * Plain-language list of details Opelo asks customers to send when an
-   * event inquiry comes in (e.g. "guest count", "setup time", "drink
-   * preferences"). Editable from the Rules page.
-   */
-  event_detail_fields: string[];
 }
 
 export interface MockExternalAction {
@@ -150,31 +140,4 @@ export interface WebhookEvent {
   parsed_kind?: "sms" | "call" | "email" | "unknown";
   inserted_message_id?: string;
   created_at: string;
-}
-
-export type BookingStage =
-  | "inquiry"
-  | "details_needed"
-  | "deposit_sent"
-  | "confirmed"
-  | "day_before"
-  | "complete";
-
-export interface Booking {
-  id: string;
-  customer_id: string;
-  customer_name: string;
-  event_date?: string;
-  event_address?: string;
-  guest_count?: number;
-  setup_time?: string;
-  drink_notes?: string;
-  day_of_contact?: string;
-  deposit_amount_cents?: number;
-  deposit_link?: string;
-  deposit_paid: boolean;
-  stage: BookingStage;
-  message_id: string;
-  created_at: string;
-  updated_at: string;
 }

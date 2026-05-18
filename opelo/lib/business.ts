@@ -5,7 +5,6 @@ export interface BusinessOffering {
 
 export interface BusinessProfile {
   name: string;
-  website: string;
   ownerName: string;
   managerName: string;
   phone: string;
@@ -13,29 +12,15 @@ export interface BusinessProfile {
 }
 
 export const demoBusiness: BusinessProfile = {
-  name: "nood coffee",
-  website: process.env.BUSINESS_WEBSITE || "noodcoffeeca.com",
-  ownerName: process.env.BUSINESS_OWNER_NAME || "Hanadi",
+  name: "Opelo Demo Studio",
+  ownerName: "the owner",
   managerName: "Opelo",
   phone: process.env.OWNER_PHONE_NUMBER || "+15555550123",
   offerings: [
-    { name: "Half Day (up to 4 hrs, up to 75 guests)", priceCents: 80000 },
-    { name: "Full Day (up to 8 hrs, unlimited guests)", priceCents: 140000 },
-    { name: "Custom Event Package", priceCents: 120000 },
+    { name: "Creator Course", priceCents: 8200 },
+    { name: "Consulting Package", priceCents: 300000 },
+    { name: "AI Workflow Implementation", priceCents: 800000 },
   ],
 };
-
-export function businessSignature(
-  channel: "email" | "sms" | "social_dm" | "phone_transcript",
-) {
-  const name = process.env.BUSINESS_OWNER_NAME || demoBusiness.ownerName;
-  const title = process.env.BUSINESS_OWNER_TITLE || "Founder";
-
-  if (channel === "email") {
-    return `Best,\n${name}\n${title}`;
-  }
-
-  return `— ${name}, ${title}`;
-}
 
 export const DEFAULT_MANAGER_NAME = "Opelo";

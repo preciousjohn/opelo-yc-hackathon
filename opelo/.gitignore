@@ -6,3 +6,6 @@ out
 .env.local
 *.log
 .DS_Store
+
+# Claude Code settings (may contain API keys from shell history)
+.claude/

@@ -77,21 +77,6 @@ export function PoliciesClient() {
         <textarea className="field mt-4 min-h-[96px] rounded-2xl" value={policies.booking_availability} onChange={(e) => update("booking_availability", e.target.value)} />
       </div>
 
-      <div className="rounded-[28px] border border-stone-100 bg-white p-4 sm:p-6">
-        <SectionTitle icon="calendar" label="Event details to collect" />
-        <p className="mt-2 text-sm text-stone-500">
-          When someone inquires about an event, Opelo asks for these. Reorder by remove + re-add; one per chip.
-        </p>
-        <div className="mt-4">
-          <CompactListField
-            label=""
-            values={policies.event_detail_fields ?? []}
-            placeholder="setup time, drink preferences…"
-            onChange={(arr) => update("event_detail_fields", arr)}
-          />
-        </div>
-      </div>
-
       <div className="sticky bottom-4 z-10 flex justify-stretch sm:justify-end">
         <SaveButton saving={saving} saved={saved} onClick={save} compact />
       </div>

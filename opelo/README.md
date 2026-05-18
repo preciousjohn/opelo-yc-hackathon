@@ -1,103 +1,126 @@
 # Opelo
 
-**AI-powered business operations manager for solopreneurs and small teams.**
+**AI middle management for one-person businesses.**
 
-Opelo is your autonomous AI agent that handles customer communications across SMS, phone calls, and email. It makes operational decisions — refunds, pricing, scheduling, sponsorships — based on your business policies, so you can focus on what matters.
+Opelo is an AI agent that runs your business operations so you can focus on your work. Customers text or call your number — Opelo handles the conversation, makes a decision based on your rules, and takes action — all without bothering you.
 
-## What It Does
+---
 
-- **Conversational AI Agent**: Automatically responds to customer inquiries via SMS, phone, and email
-- **Policy-Based Decisions**: Configure rules for refunds, pricing thresholds, booking availability, and more
-- **Multi-Channel Support**: Integrates with AgentPhone (SMS/calls) and AgentMail (email)
-- **Real-Time Dashboard**: Monitor all conversations, decisions, and actions in one place
-- **Smart Escalation**: Knows when to handle things autonomously vs. when to notify you
+## What Opelo does
 
-## Tech Stack
+When a customer reaches out, Opelo:
 
-- **Framework**: Next.js 15 (App Router)
-- **Database**: Supabase (PostgreSQL)
-- **AI**: Google Gemini / OpenAI / Anthropic
-- **Communications**: AgentPhone (SMS/Voice), AgentMail (Email)
-- **Styling**: Tailwind CSS
+- **Approves or declines refunds** under your threshold automatically
+- **Books meetings** with qualified leads based on your availability
+- **Holds your pricing floor** and counter-offers sponsorships or project discounts
+- **Escalates** tricky situations to you by text, with a YES/NO reply to resolve them
+- **Responds in the customer's language** — Gemini detects and replies in Spanish, French, Portuguese, etc.
+- **Sends a call summary** after every phone conversation so you always know what happened
 
-## Quick Start
+Everything is logged. Nothing slips through.
 
-```bash
-# Install dependencies
-pnpm install
+---
 
-# Run development server
-pnpm dev
+## How it works
 
-# Open http://localhost:3000
+```
+Customer texts or calls your number (iMessage / SMS / phone)
+        ↓
+AgentPhone receives the message and notifies Opelo
+        ↓
+Opelo reads your business rules and past context
+        ↓
+Gemini 2.5 Flash makes a decision
+        ↓
+Opelo replies to the customer + takes action (refund, booking, payment link)
+        ↓
+You get a text summary — reply YES/NO if anything needs your input
 ```
 
-Opelo runs in demo mode without API keys. Add keys to `.env.local` to enable live integrations.
+---
 
-## Environment Variables
+## Tech stack
 
-```bash
-# Database (Supabase)
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
+| Layer | What |
+|---|---|
+| **AI** | Gemini 2.5 Flash (primary), OpenAI / Anthropic (fallback) |
+| **Voice & SMS** | AgentPhone (iMessage + SMS + calls) |
+| **Email** | AgentMail |
+| **Card payments** | Stripe |
+| **Crypto payments** | Sponge (USDC on Solana / Base) |
+| **Memory** | Supermemory |
+| **Calendar** | Google Calendar |
+| **Framework** | Next.js 14, TypeScript, Tailwind |
 
-# AI (pick one or more)
-GEMINI_API_KEY=
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
+Payment links show both options on a single page — customer picks card or crypto.
 
-# SMS/Phone (AgentPhone)
-AGENTPHONE_API_KEY=
-AGENTPHONE_AGENT_ID=
-AGENTPHONE_NUMBER_ID=
-AGENTPHONE_NUMBER=
+---
 
-# Email (AgentMail)
-AGENTMAIL_API_KEY=
-AGENTMAIL_INBOX_ID=
+## Running locally
 
-# Your Info
-OWNER_PHONE_NUMBER=
-BUSINESS_OWNER_NAME=
-BUSINESS_DESCRIPTION=
+```sh
+cd opelo
+npm install
+npm run dev
+# → http://localhost:3000
 ```
 
-## Webhooks
+Works in demo mode without any API keys. Add keys to `.env.local` to go live.
 
-After deploying, configure your integrations to send webhooks to:
+---
 
-- **AgentPhone**: `https://your-domain.vercel.app/api/agentphone/webhook`
-- **AgentMail**: `https://your-domain.vercel.app/api/agentmail/webhook`
+## Getting started as a business owner
 
-## Testing
+1. Go to `/get-started` and describe your business in plain English
+2. Opelo sets up your rules automatically
+3. Share your AgentPhone number with customers
+4. Watch the dashboard — Opelo handles the rest
 
-```bash
-# Test SMS processing
+---
+
+## Key env vars
+
+Copy `.env.local.example` to `.env.local` and fill in what you need:
+
+| Key | What it enables |
+|---|---|
+| `GEMINI_API_KEY` | Live AI decisions (required for best results) |
+| `AGENTPHONE_API_KEY` | Real iMessage / SMS / call handling |
+| `AGENTPHONE_AGENT_ID` | Links messages to your Opelo agent |
+| `AGENTPHONE_NUMBER_ID` | Required for shared-imessage replies |
+| `AGENTMAIL_API_KEY` | Live email replies |
+| `STRIPE_SECRET_KEY` | Real card payment links |
+| `SPONGE_API_KEY` | Real crypto payment links |
+| `OWNER_PHONE_NUMBER` | Where Opelo texts you for escalations |
+
+Set `NEXT_PUBLIC_DEMO_MODE=false` to disable the demo cap on payment amounts.
+
+---
+
+## Testing without a real phone
+
+```sh
+# Simulate an inbound SMS
 curl -X POST http://localhost:3000/api/agentphone/test
 
-# Test email processing
-curl -X POST http://localhost:3000/api/agentmail/test
+# Simulate a phone call transcript
+curl -X POST http://localhost:3000/api/agentphone/test-call \
+  -H 'Content-Type: application/json' \
+  -d '{"transcript":"I want a refund for the $45 course","caller_name":"Alex"}'
 
-# Reset demo data
+# Reset to demo data
 curl -X POST http://localhost:3000/api/seed
 ```
 
-## Architecture
+---
 
-```
-opelo/
-├── app/
-│   ├── (app)/              # Dashboard routes
-│   ├── (marketing)/        # Landing page
-│   └── api/                # Webhook endpoints
-├── components/             # React components
-└── lib/
-    ├── ai/                 # AI manager & LLM integrations
-    ├── db/                 # Supabase store
-    └── integrations/       # AgentPhone, AgentMail, etc.
+## Polling (no-tunnel fallback)
+
+If you can't expose a public webhook URL, Opelo can poll for new messages:
+
+```sh
+# Check for new messages every 10 seconds
+watch -n 10 curl -s http://localhost:3000/api/agentphone/poll
 ```
 
-## License
-
-MIT
+This works offline — no ngrok required.
