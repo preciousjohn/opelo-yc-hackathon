@@ -134,10 +134,29 @@ export interface OwnerSummary {
 
 export interface WebhookEvent {
   id: string;
-  provider: "agentphone" | "agentmail";
+  provider: "agentphone" | "agentmail" | "sponge";
   event_type: string;
   payload: unknown;
-  parsed_kind?: "sms" | "call" | "email" | "unknown";
+  parsed_kind?: "sms" | "call" | "email" | "payment" | "unknown";
   inserted_message_id?: string;
   created_at: string;
+}
+
+export interface Booking {
+  id: string;
+  customer_id: string;
+  customer_name: string;
+  event_date?: string;
+  event_address?: string;
+  guest_count?: number;
+  setup_time?: string;
+  drink_notes?: string;
+  day_of_contact?: string;
+  deposit_amount_cents?: number;
+  deposit_link?: string;
+  deposit_paid: boolean;
+  stage: "inquiry" | "details_needed" | "deposit_sent" | "confirmed" | "day_before" | "complete";
+  message_id: string;
+  created_at: string;
+  updated_at: string;
 }
