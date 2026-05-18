@@ -1,117 +1,103 @@
 # Opelo
 
-AI middle management for one-person businesses. Delegate operational
-judgment — refunds, pricing exceptions, sponsorships, scheduling, and
-escalations — to an AI manager that follows your business policies.
+**AI-powered business operations manager for solopreneurs and small teams.**
 
-## Quick start
+Opelo is your autonomous AI agent that handles customer communications across SMS, phone calls, and email. It makes operational decisions — refunds, pricing, scheduling, sponsorships — based on your business policies, so you can focus on what matters.
 
-```sh
-npm install
-npm run dev
-# open http://localhost:3000
+## What It Does
+
+- **Conversational AI Agent**: Automatically responds to customer inquiries via SMS, phone, and email
+- **Policy-Based Decisions**: Configure rules for refunds, pricing thresholds, booking availability, and more
+- **Multi-Channel Support**: Integrates with AgentPhone (SMS/calls) and AgentMail (email)
+- **Real-Time Dashboard**: Monitor all conversations, decisions, and actions in one place
+- **Smart Escalation**: Knows when to handle things autonomously vs. when to notify you
+
+## Tech Stack
+
+- **Framework**: Next.js 15 (App Router)
+- **Database**: Supabase (PostgreSQL)
+- **AI**: Google Gemini / OpenAI / Anthropic
+- **Communications**: AgentPhone (SMS/Voice), AgentMail (Email)
+- **Styling**: Tailwind CSS
+
+## Quick Start
+
+```bash
+# Install dependencies
+pnpm install
+
+# Run development server
+pnpm dev
+
+# Open http://localhost:3000
 ```
 
-Opelo runs entirely in demo/mock mode without any API keys. Drop keys into
-`.env.local` (see `.env.local.example`) to turn live providers on. There is
-no auth, no signup, and no protected routes.
+Opelo runs in demo mode without API keys. Add keys to `.env.local` to enable live integrations.
 
-## Developer testing
+## Environment Variables
 
-### Inbound email (AgentMail)
+```bash
+# Database (Supabase)
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
 
-```sh
-# Insert a fake live email (random fixture)
-curl -X POST http://localhost:3000/api/agentmail/test
+# AI (pick one or more)
+GEMINI_API_KEY=
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
 
-# Replay a real-shaped AgentMail webhook
-curl -X POST http://localhost:3000/api/agentmail/webhook \
-  -H 'Content-Type: application/json' \
-  -d '{"event_type":"message.received","message":{"id":"am_1","from":"alex@example.com","subject":"Refund","text":"Refund my $82 please"}}'
+# SMS/Phone (AgentPhone)
+AGENTPHONE_API_KEY=
+AGENTPHONE_AGENT_ID=
+AGENTPHONE_NUMBER_ID=
+AGENTPHONE_NUMBER=
 
-# Send a real outbound email to verify wiring
-curl -X POST http://localhost:3000/api/agentmail/send-test \
-  -H 'Content-Type: application/json' \
-  -d '{"to":"you@gmail.com","subject":"Hi","text":"Test"}'
+# Email (AgentMail)
+AGENTMAIL_API_KEY=
+AGENTMAIL_INBOX_ID=
+
+# Your Info
+OWNER_PHONE_NUMBER=
+BUSINESS_OWNER_NAME=
+BUSINESS_DESCRIPTION=
 ```
 
-### Inbound SMS (AgentPhone)
+## Webhooks
 
-```sh
-# Insert a fake live SMS (default Jordan $1,500 / $3,000 pricing)
+After deploying, configure your integrations to send webhooks to:
+
+- **AgentPhone**: `https://your-domain.vercel.app/api/agentphone/webhook`
+- **AgentMail**: `https://your-domain.vercel.app/api/agentmail/webhook`
+
+## Testing
+
+```bash
+# Test SMS processing
 curl -X POST http://localhost:3000/api/agentphone/test
 
-# Insert a fake call transcript
-curl -X POST http://localhost:3000/api/agentphone/test-call
+# Test email processing
+curl -X POST http://localhost:3000/api/agentmail/test
 
-# Replay a real-shaped AgentPhone SMS webhook
-curl -X POST http://localhost:3000/api/agentphone/webhook \
-  -H 'Content-Type: application/json' \
-  -d '{"event":"sms.received","data":{"message":{"id":"ap_1","from":"+15551234567","body":"Refund $40 please"}}}'
-
-# Inspect ALL recent AgentPhone webhook payloads exactly as received
-curl http://localhost:3000/api/agentphone/debug | python3 -m json.tool
-
-# Probe AgentPhone for the right send-SMS path on your tenant
-curl http://localhost:3000/api/agentphone/probe | python3 -m json.tool
-
-# Send a real outbound SMS to verify wiring
-curl -X POST http://localhost:3000/api/agentphone/send-test \
-  -H 'Content-Type: application/json' \
-  -d '{"to":"+15551234567","body":"Opelo test"}'
-```
-
-### Hook AgentPhone / AgentMail to real webhooks
-
-Real inbound to localhost needs a public tunnel:
-
-```sh
-ngrok http 3000
-```
-
-Set the AgentMail webhook URL to:
-
-```
-https://YOUR-NGROK-URL/api/agentmail/webhook
-```
-
-Set the AgentPhone webhook URL to:
-
-```
-https://YOUR-NGROK-URL/api/agentphone/webhook
-```
-
-Both endpoints save every raw payload to the debug feed before parsing, so a
-webhook that doesn't surface in the cockpit will still appear in
-`/api/agentphone/debug` (or `agentmail` provider). That's the first place to
-look when "I texted the number and nothing happened."
-
-### Reset the demo
-
-```sh
+# Reset demo data
 curl -X POST http://localhost:3000/api/seed
-# or: rm -rf .opelo-data
 ```
-
-## Env vars
-
-See `.env.local.example`. Notable overrides:
-
-- `GEMINI_API_KEY` — primary LLM for decisioning (preferred over OpenAI /
-  Anthropic when present)
-- `AGENTPHONE_SEND_PATH` — override the outbound SMS path if your AgentPhone
-  tenant uses something other than `/sms/send`
-- `AGENTMAIL_INBOX_ID` — required for live AgentMail send
 
 ## Architecture
 
-- `app/page.tsx` — the single cockpit page (no Logs tab, no auth)
-- `app/api/process` — runs an inbound message through the AI manager
-- `app/api/agentmail/*` and `app/api/agentphone/*` — provider webhooks +
-  test/debug routes
-- `lib/ai/manager.ts` — deterministic decision engine + LLM enhancement
-- `lib/ai/gemini.ts` — Gemini integration (primary)
-- `lib/integrations/{agentmail,agentphone,sponge,calendar,supermemory}.ts`
-  — provider wrappers. Each one returns a `MockExternalAction` so the
-  cockpit can render success/failure consistently across real and mock
-  modes.
+```
+opelo/
+├── app/
+│   ├── (app)/              # Dashboard routes
+│   ├── (marketing)/        # Landing page
+│   └── api/                # Webhook endpoints
+├── components/             # React components
+└── lib/
+    ├── ai/                 # AI manager & LLM integrations
+    ├── db/                 # Supabase store
+    └── integrations/       # AgentPhone, AgentMail, etc.
+```
+
+## License
+
+MIT
