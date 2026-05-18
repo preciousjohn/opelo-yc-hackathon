@@ -11,6 +11,7 @@ import {
   WebhookEvent,
 } from "../types";
 import { nanoid } from "../integrations/util";
+import { demoBusiness } from "../business";
 import {
   defaultPolicies,
   seedActions,
@@ -99,6 +100,20 @@ async function withLock<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export const store = {
+  /**
+   * Single-business helpers — we only support one business profile in this
+   * build. Read-through to demoBusiness + BUSINESS_DESCRIPTION env so the
+   * dashboard can present an editable identity without a separate table.
+   */
+  async getBusinessName(): Promise<string> {
+    return demoBusiness.name;
+  },
+  async getBusinessDescription(): Promise<string> {
+    return (
+      process.env.BUSINESS_DESCRIPTION?.trim() ||
+      `${demoBusiness.name} — operated by ${demoBusiness.ownerName}.`
+    );
+  },
   async getPolicies(): Promise<Policies> {
     const snap = await readSnapshot();
     return snap.policies;
