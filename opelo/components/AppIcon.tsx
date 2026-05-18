@@ -17,6 +17,7 @@ export type AppIconName =
   | "refund"
   | "rules"
   | "spark"
+  | "sparkles"
   | "x";
 
 export function AppIcon({
@@ -128,6 +129,13 @@ export function AppIcon({
         </>
       )}
       {name === "back" && <path d="M14 7 9 12l5 5" />}
+      {name === "sparkles" && (
+        <>
+          <path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z" />
+          <path d="M5 19l.75 2.25L8 22l-2.25.75L5 25l-.75-2.25L2 22l2.25-.75L5 19Z" />
+          <path d="M19 16l.5 1.5L21 18l-1.5.5L19 20l-.5-1.5L17 18l1.5-.5L19 16Z" />
+        </>
+      )}
     </svg>
   );
 }
