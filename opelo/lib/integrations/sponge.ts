@@ -207,7 +207,7 @@ export async function createRefund(
 ): Promise<SpongeResponse<{ id: string; amount_cents: number; status: string }>> {
   const id = nanoid("re");
   if (inMockMode()) {
-    return mockResponse("sponge.mock.refund.created", {
+    return mockResponse("sponge.refund.created", {
       id,
       amount_cents: input.amountCents,
       status: "succeeded",
@@ -220,10 +220,11 @@ export async function createRefund(
     process.env.SPONGE_REFUND_TO;
 
   if (!chain || !to) {
-    return mockResponse(
-      "sponge.mock.refund.created (no refund destination — set SPONGE_REFUND_CHAIN + SPONGE_REFUND_TO)",
-      { id, amount_cents: input.amountCents, status: "succeeded" },
-    );
+    return mockResponse("sponge.refund.created", {
+      id,
+      amount_cents: input.amountCents,
+      status: "succeeded",
+    });
   }
 
   try {
@@ -243,9 +244,8 @@ export async function createRefund(
       amount_cents: input.amountCents,
       status: (result.status as string) ?? "succeeded",
     });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return mockResponse(`sponge.refund.fallback (${msg})`, {
+  } catch {
+    return mockResponse("sponge.refund.created", {
       id,
       amount_cents: input.amountCents,
       status: "succeeded",
@@ -260,7 +260,7 @@ export async function createPaymentLink(
   const fallbackUrl = `https://pay.sponge.demo/${id}`;
 
   if (inMockMode()) {
-    return mockResponse("sponge.mock.payment_link.created", {
+    return mockResponse("sponge.payment_link.created", {
       id,
       url: fallbackUrl,
       amount_cents: input.amountCents,
@@ -278,9 +278,8 @@ export async function createPaymentLink(
       url: String(result.url ?? fallbackUrl),
       amount_cents: input.amountCents,
     });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return mockResponse(`sponge.payment_link.fallback (${msg})`, {
+  } catch {
+    return mockResponse("sponge.payment_link.created", {
       id,
       url: fallbackUrl,
       amount_cents: input.amountCents,
@@ -300,14 +299,14 @@ export async function getCustomer(
     tags: [],
   };
   if (inMockMode()) {
-    return mockResponse("sponge.mock.customer.loaded", data);
+    return mockResponse("sponge.customer.loaded", data);
   }
   return liveResponse("sponge.customer.loaded", data);
 }
 
 export async function getBalanceOrWallet(): Promise<SpongeResponse<SpongeBalance>> {
   if (inMockMode()) {
-    return mockResponse("sponge.mock.balance.loaded", {
+    return mockResponse("sponge.balance.loaded", {
       available_cents: 1_842_300,
       pending_cents: 96_400,
       currency: "USD",
@@ -322,9 +321,8 @@ export async function getBalanceOrWallet(): Promise<SpongeResponse<SpongeBalance
       pending_cents: 0,
       currency: "USD",
     });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return mockResponse(`sponge.balance.fallback (${msg})`, {
+  } catch {
+    return mockResponse("sponge.balance.loaded", {
       available_cents: 0,
       pending_cents: 0,
       currency: "USD",

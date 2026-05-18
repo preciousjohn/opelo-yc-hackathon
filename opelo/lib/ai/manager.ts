@@ -269,9 +269,9 @@ function decide(args: DecideArgs): DecisionPlan {
       return {
         decision: "negotiate",
         action_type: "discount_offered",
-        policy_applied: `Never discount consulting below $${policies.min_project_price}`,
-        fallback_reasoning_summary: `Budget of $${amt.toFixed(0)} is below the $${policies.min_project_price} floor — held the line and proposed a smaller scope.`,
-        fallback_customer_response: `Thanks for being upfront on budget — appreciate that. The full consulting package stays at $${(policies.min_project_price + 500).toLocaleString()} so I can deliver the outcome we both want. If $${policies.min_project_price.toLocaleString()} works, I can offer a tighter scope focused on the highest-leverage piece — happy to send a one-pager.`,
+        policy_applied: `Never discount events below $${policies.min_project_price}`,
+        fallback_reasoning_summary: `Budget of $${amt.toFixed(0)} is below the $${policies.min_project_price} floor — held the line and proposed a smaller package.`,
+        fallback_customer_response: `Thanks for being upfront on budget — appreciate that. Our full-day cart package stays at $${(policies.min_project_price + 500).toLocaleString()} so we can staff and stock properly. If $${policies.min_project_price.toLocaleString()} works, I can offer a half-day setup focused on your highest-traffic window — happy to send details.`,
         fallback_owner_summary: `Held pricing floor at $${policies.min_project_price.toLocaleString()} with ${customer.name}; offered a reduced scope.`,
         revenue_delta: 0,
         counter_offer: policies.min_project_price,
@@ -280,17 +280,18 @@ function decide(args: DecideArgs): DecisionPlan {
 
     case "event_inquiry": {
       const amt = detected_amount ?? 0;
+      const hasDetails = amt > 0;
       return {
-        decision: amt > 0 ? "approve" : "schedule",
-        action_type: amt > 0 ? "deposit_requested" : "meeting_booked",
-        policy_applied:
-          "Qualify event leads, collect details, request deposit to confirm",
-        fallback_customer_response: `Thanks so much for reaching out! We'd love to be there for your event. To confirm your date, I'll need a few details: How many guests are you expecting? What's the event address and setup time? I'll follow up with a deposit link to hold the date.`,
-        fallback_owner_summary: `New event inquiry from ${customer.name}${amt > 0 ? ` — $${amt.toFixed(0)} budget mentioned` : ""}.`,
-        fallback_reasoning_summary:
-          "Event inquiry — collecting details and requesting deposit to confirm.",
+        decision: hasDetails ? "approve" : "schedule",
+        action_type: hasDetails ? "deposit_requested" : "auto_reply_sent",
+        policy_applied: "Collect event details and send deposit link to hold the date",
+        fallback_customer_response: hasDetails
+          ? `Thanks so much for reaching out — we'd love to bring the cart to your event! To hold your date, the next step is a deposit. Could you also confirm the event address, setup time, guest count, any drink customizations, and the best day-of contact? I'll get everything confirmed once the deposit is in.`
+          : `Thanks so much for reaching out — we'd love to be there! To get your date on the calendar, I just need a few details: approximate guest count, event date and address, setup time, any drink customizations, and your budget. Reply here and I'll follow up with next steps right away.`,
+        fallback_owner_summary: `New event inquiry from ${customer.name}${amt > 0 ? ` — $${amt.toFixed(0)} budget mentioned. Deposit link sent.` : ". Opelo asked for event details."}`,
+        fallback_reasoning_summary: `Event booking inquiry — ${hasDetails ? "sent deposit link to hold the date" : "requested missing event details"}.`,
         revenue_delta: 0,
-        counter_offer: amt > 0 ? amt : policies.min_project_price,
+        counter_offer: hasDetails ? amt : undefined,
       };
     }
 
@@ -302,7 +303,7 @@ function decide(args: DecideArgs): DecisionPlan {
           action_type: "meeting_booked",
           policy_applied: `Auto-book qualified leads above $${policies.auto_book_lead_above}`,
           fallback_reasoning_summary: `Lead with a $${amt.toFixed(0)} budget cleared your auto-book threshold — sent a confirmed time.`,
-          fallback_customer_response: `Thanks — this is exactly the kind of project I love working on. I've put you on the calendar for ${calendar.nextSlotLabel()}. You'll get an invite shortly. Looking forward.`,
+          fallback_customer_response: `Thanks — this sounds like a great fit for the cart. I've put you on the calendar for ${calendar.nextSlotLabel()}. You'll get a confirmation shortly. Looking forward to it.`,
           fallback_owner_summary: `Auto-booked $${amt.toFixed(0)} lead ${customer.name} for ${calendar.nextSlotLabel()}.`,
           revenue_delta: amt,
         };
@@ -378,13 +379,15 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     plan.action_type === "sponsorship_countered" ||
     plan.action_type === "deposit_requested"
   ) {
-    const counter = plan.counter_offer ?? 0;
+    const counter =
+      plan.counter_offer ??
+      (plan.action_type === "deposit_requested" ? (detected_amount ?? 0) : 0);
     if (counter > 0) {
       const description =
-        plan.action_type === "sponsorship_countered"
-          ? `${demoBusiness.name} — sponsorship at floor`
-          : plan.action_type === "deposit_requested"
-            ? `${demoBusiness.name} — event deposit`
+        plan.action_type === "deposit_requested"
+          ? `Event deposit — ${demoBusiness.name}`
+          : plan.action_type === "sponsorship_countered"
+            ? `${demoBusiness.name} — sponsorship at floor`
             : `${demoBusiness.name} — reduced scope engagement`;
       const resp = await spongeCreatePaymentLink({
         amountCents: Math.round(counter * 100),
@@ -450,7 +453,7 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     case "social_dm":
     default:
       actions.push({
-        name: "social.mock.dm.replied",
+        name: "social.dm.replied",
         ok: true,
         ref: nanoid("dm"),
         detail: `DM reply queued for ${customer.name} (demo — social DM send is mocked).`,

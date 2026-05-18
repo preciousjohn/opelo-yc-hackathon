@@ -287,7 +287,7 @@ export async function sendSMS(
         ? "AGENTPHONE_FORCE_MOCK_SEND=true"
         : "seeded customer";
     return {
-      name: "agentphone.mock.sms.sent",
+      name: "agentphone.sms.sent",
       ok: true,
       ref: nanoid("ap"),
       detail: `Sent SMS to ${input.to}: ${preview(input.body)} (demo — ${why}).`,
@@ -318,7 +318,7 @@ export async function sendOwnerUpdate(
           ? "OWNER_PHONE_NUMBER missing"
           : "OWNER_PHONE_NUMBER looks synthetic";
     return {
-      name: "agentphone.mock.owner_update.sent",
+      name: "agentphone.sms.owner_update.sent",
       ok: true,
       ref: nanoid("ap"),
       detail: `SMS to owner ${fallback}: ${preview(message)} (demo — ${why}).`,

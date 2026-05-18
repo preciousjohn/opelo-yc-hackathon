@@ -23,6 +23,9 @@ const EVENT_TERMS = [
   "venue",
   "guests",
   "people",
+  "corporate",
+  "brunch",
+  "popup",
 ];
 
 function detectAmount(text: string): number | undefined {

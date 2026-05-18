@@ -54,6 +54,12 @@ const DECISION_LABEL: Record<string, string> = {
   escalate_to_owner: "Owner notified",
 };
 
+const ACTION_TYPE_LABEL: Record<string, string> = {
+  deposit_requested: "Deposit sent",
+  event_confirmed: "Event confirmed",
+  day_of_reminder_sent: "Reminder sent",
+};
+
 export function Cockpit() {
   const [managerName, setManagerName] = useState<string>(DEFAULT_MANAGER_NAME);
   const [messages, setMessages] = useState<InboundMessage[]>([]);
@@ -597,6 +603,10 @@ function ResultPanel({
           accent
         />
         <DetailRow
+          label="Action"
+          value={prettyActionType(result.action_type)}
+        />
+        <DetailRow
           label="Policy used"
           value={result.policy_applied}
           full
@@ -984,10 +994,14 @@ function prettyClass(c: string): string {
 }
 
 function humanizeAction(name: string): string {
+  if (name.includes("sponge") && name.includes("payment_link"))
+    return "Sponge deposit link created";
+  if (name.includes("memory") && name.includes("decision"))
+    return "Booking saved to memory";
+  if (name.includes("memory") && name.includes("searched"))
+    return "Customer history checked";
   if (name.includes("sponge") && name.includes("refund"))
     return "Sponge refund created";
-  if (name.includes("sponge") && name.includes("payment_link"))
-    return "Sponge payment link generated";
   if (name.includes("agentmail.reply")) return "AgentMail reply sent";
   if (name.includes("agentphone") && name.includes("owner"))
     return "AgentPhone owner SMS sent";
@@ -995,9 +1009,12 @@ function humanizeAction(name: string): string {
     return "AgentPhone SMS sent";
   if (name.includes("agentphone") && name.includes("call"))
     return "AgentPhone call placed";
-  if (name.includes("google_calendar")) return "Calendar meeting booked";
-  if (name.includes("supermemory")) return "Decision saved to Supermemory";
+  if (name.includes("google_calendar")) return "Calendar event booked";
   return name;
+}
+
+function prettyActionType(t: string): string {
+  return ACTION_TYPE_LABEL[t] ?? t.replace(/_/g, " ");
 }
 
 export type { MockExternalAction };

@@ -19,8 +19,8 @@ export const demoBusiness: BusinessProfile = {
   managerName: "Opelo",
   phone: process.env.OWNER_PHONE_NUMBER || "+15555550123",
   offerings: [
-    { name: "Cart — Half Day (up to 4hrs)", priceCents: 80000 },
-    { name: "Cart — Full Day", priceCents: 140000 },
+    { name: "Half Day (up to 4 hrs, up to 75 guests)", priceCents: 80000 },
+    { name: "Full Day (up to 8 hrs, unlimited guests)", priceCents: 140000 },
     { name: "Custom Event Package", priceCents: 120000 },
   ],
 };

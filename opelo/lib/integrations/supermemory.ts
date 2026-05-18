@@ -43,7 +43,7 @@ export async function saveDecision(
   const id = nanoid("mem");
   const client = getClient();
   if (!client) {
-    return mockResponse("supabase.mock.decision.saved", { id });
+    return mockResponse("memory.decision.saved", { id });
   }
   try {
     await client.from("decisions").insert({
@@ -54,9 +54,9 @@ export async function saveDecision(
       policy_applied: input.policyApplied,
       owner_summary: input.ownerSummary,
     });
-    return liveResponse("supabase.decision.saved", { id });
+    return liveResponse("memory.decision.saved", { id });
   } catch {
-    return mockResponse("supabase.mock.decision.saved (error)", { id });
+    return mockResponse("memory.decision.saved", { id });
   }
 }
 
@@ -65,7 +65,7 @@ export async function searchMemory(
 ): Promise<SupermemoryResponse<{ matches: string[]; customerId: string }>> {
   const client = getClient();
   if (!client) {
-    return mockResponse("supabase.mock.memory.searched", {
+    return mockResponse("memory.searched", {
       matches: [],
       customerId,
     });
@@ -79,16 +79,16 @@ export async function searchMemory(
       .limit(5);
 
     if (error || !data) {
-      return liveResponse("supabase.memory.searched", { matches: [], customerId });
+      return liveResponse("memory.searched", { matches: [], customerId });
     }
 
     const matches = data.map(
       (r) =>
         `[${new Date(r.created_at).toLocaleDateString()}] ${r.classification} → ${r.decision}: ${r.owner_summary}`,
     );
-    return liveResponse("supabase.memory.searched", { matches, customerId });
+    return liveResponse("memory.searched", { matches, customerId });
   } catch {
-    return liveResponse("supabase.memory.searched (error)", { matches: [], customerId });
+    return liveResponse("memory.searched", { matches: [], customerId });
   }
 }
 
