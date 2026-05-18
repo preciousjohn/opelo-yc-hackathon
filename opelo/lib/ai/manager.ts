@@ -29,6 +29,8 @@ import {
   toMockExternalAction as supermemoryAction,
 } from "../integrations/supermemory";
 import { businessSignature, demoBusiness } from "../business";
+import { createDepositBookingFlow } from "../booking/flow";
+import { store } from "../db/store";
 
 export interface ProcessOptions {
   useLLM?: boolean;
@@ -113,7 +115,19 @@ export async function processInboundMessage(
     }
   }
 
-  const signed_response = signedCustomerResponse(customer_response, message.channel);
+  let responseBody = customer_response;
+  if (plan.action_type === "deposit_requested") {
+    const depositDollars =
+      plan.counter_offer ?? hints.detected_amount ?? 800;
+    const flow = await createDepositBookingFlow({
+      message,
+      customer,
+      depositDollars,
+    });
+    responseBody += flow.appendix;
+  }
+
+  const signed_response = signedCustomerResponse(responseBody, message.channel);
 
   const externalActions = await runExternalActions({
     plan,
@@ -376,19 +390,14 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
 
   if (
     plan.action_type === "discount_offered" ||
-    plan.action_type === "sponsorship_countered" ||
-    plan.action_type === "deposit_requested"
+    plan.action_type === "sponsorship_countered"
   ) {
-    const counter =
-      plan.counter_offer ??
-      (plan.action_type === "deposit_requested" ? (detected_amount ?? 0) : 0);
+    const counter = plan.counter_offer ?? 0;
     if (counter > 0) {
       const description =
-        plan.action_type === "deposit_requested"
-          ? `Event deposit — ${demoBusiness.name}`
-          : plan.action_type === "sponsorship_countered"
-            ? `${demoBusiness.name} — sponsorship at floor`
-            : `${demoBusiness.name} — reduced scope engagement`;
+        plan.action_type === "sponsorship_countered"
+          ? `${demoBusiness.name} — sponsorship at floor`
+          : `${demoBusiness.name} — reduced scope engagement`;
       const resp = await spongeCreatePaymentLink({
         amountCents: Math.round(counter * 100),
         description,
@@ -400,6 +409,18 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
           `Payment link for $${counter.toLocaleString()} → ${resp.data.url}`,
         ),
       );
+    }
+  }
+
+  if (plan.action_type === "deposit_requested") {
+    const booking = await store.getBookingByCustomer(customer.id);
+    if (booking?.deposit_link) {
+      actions.push({
+        name: "sponge.payment_link.created",
+        ok: true,
+        ref: booking.id,
+        detail: `Payment link for $${((booking.deposit_amount_cents ?? 0) / 100).toLocaleString()} → ${booking.deposit_link}`,
+      });
     }
   }
 

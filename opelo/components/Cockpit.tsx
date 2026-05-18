@@ -12,6 +12,7 @@ import {
   ProcessResult,
 } from "@/lib/types";
 import { DEFAULT_MANAGER_NAME, demoBusiness } from "@/lib/business";
+import { BookingsBoard } from "@/components/BookingsBoard";
 
 type PipelineStep =
   | "idle"
@@ -243,9 +244,7 @@ export function Cockpit() {
         </section>
 
         <section className="lg:col-span-3 space-y-5">
-          {policies && (
-            <PoliciesCard policies={policies} onChange={updatePolicies} />
-          )}
+          <BookingsBoard />
           <ActionsFeed actions={actions} currentResult={activeResult} />
         </section>
       </div>

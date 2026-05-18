@@ -145,3 +145,30 @@ export interface WebhookEvent {
   inserted_message_id?: string;
   created_at: string;
 }
+
+export type BookingStage =
+  | "inquiry"
+  | "details_needed"
+  | "deposit_sent"
+  | "confirmed"
+  | "day_before"
+  | "complete";
+
+export interface Booking {
+  id: string;
+  customer_id: string;
+  customer_name: string;
+  event_date?: string;
+  event_address?: string;
+  guest_count?: number;
+  setup_time?: string;
+  drink_notes?: string;
+  day_of_contact?: string;
+  deposit_amount_cents?: number;
+  deposit_link?: string;
+  deposit_paid: boolean;
+  stage: BookingStage;
+  message_id: string;
+  created_at: string;
+  updated_at: string;
+}

@@ -7,6 +7,7 @@ import { OpeloWordmark } from "@/components/OpeloWordmark";
 const nav = [
   { href: "/dashboard", label: "Overview", emoji: "📊" },
   { href: "/inbox",     label: "Messages", emoji: "📬" },
+  { href: "/cockpit",   label: "Bookings", emoji: "☕" },
   { href: "/policies",  label: "My Rules",  emoji: "📋" },
   { href: "/logs",      label: "Activity",  emoji: "📜" },
 ];

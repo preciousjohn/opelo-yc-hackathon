@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import {
   ActionRecord,
+  Booking,
   CompanyWallet,
   Customer,
   InboundMessage,
@@ -13,6 +14,7 @@ import { nanoid } from "../integrations/util";
 import {
   defaultPolicies,
   seedActions,
+  seedBookings,
   seedCustomers,
   seedMessages,
   seedPendingInbound,
@@ -31,6 +33,7 @@ interface Snapshot {
   pending_inbound: InboundMessage[];
   wallet: CompanyWallet;
   webhook_events: WebhookEvent[];
+  bookings: Booking[];
 }
 
 let cache: Snapshot | null = null;
@@ -46,6 +49,7 @@ function initial(): Snapshot {
     pending_inbound: seedPendingInbound(),
     wallet: seedWallet(),
     webhook_events: [],
+    bookings: seedBookings(),
   };
 }
 
@@ -66,6 +70,7 @@ async function readSnapshot(): Promise<Snapshot> {
     if (!cache.pending_inbound) cache.pending_inbound = seedPendingInbound();
     if (!cache.wallet) cache.wallet = seedWallet();
     if (!cache.webhook_events) cache.webhook_events = [];
+    if (!cache.bookings) cache.bookings = seedBookings();
     return cache;
   } catch {
     cache = initial();
@@ -297,6 +302,44 @@ export const store = {
     return withLock(async () => {
       cache = initial();
       await persist();
+    });
+  },
+  async listBookings(): Promise<Booking[]> {
+    const snap = await readSnapshot();
+    return [...snap.bookings].sort((a, b) => {
+      const da = a.event_date ?? "";
+      const db = b.event_date ?? "";
+      if (da && db && da !== db) return da.localeCompare(db);
+      return b.updated_at.localeCompare(a.updated_at);
+    });
+  },
+  async getBooking(id: string): Promise<Booking | undefined> {
+    const snap = await readSnapshot();
+    return snap.bookings.find((b) => b.id === id);
+  },
+  async getBookingByCustomer(customerId: string): Promise<Booking | undefined> {
+    const snap = await readSnapshot();
+    return snap.bookings.find((b) => b.customer_id === customerId);
+  },
+  async addBooking(booking: Booking): Promise<Booking> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      snap.bookings.unshift(booking);
+      await persist();
+      return booking;
+    });
+  },
+  async updateBooking(
+    id: string,
+    patch: Partial<Booking>,
+  ): Promise<Booking | null> {
+    return withLock(async () => {
+      const snap = await readSnapshot();
+      const b = snap.bookings.find((x) => x.id === id);
+      if (!b) return null;
+      Object.assign(b, patch, { updated_at: new Date().toISOString() });
+      await persist();
+      return b;
     });
   },
 };

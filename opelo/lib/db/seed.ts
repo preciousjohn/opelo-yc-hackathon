@@ -1,5 +1,6 @@
 import {
   ActionRecord,
+  Booking,
   CompanyWallet,
   Customer,
   InboundMessage,
@@ -48,6 +49,7 @@ export function seedCustomers(): Customer[] {
       id: "cus_seed_techco",
       name: "TechCo Events",
       email: "events@techco.com",
+      phone: "+14155550188",
       vip: false,
       prior_refunds: 0,
       lifetime_value: 0,
@@ -223,4 +225,45 @@ export function seedWallet(): CompanyWallet {
 
 export function seedPendingInbound(): InboundMessage[] {
   return [];
+}
+
+export function seedBookings(): Booking[] {
+  const base = Date.now();
+  const earlier = (mins: number) =>
+    new Date(base - mins * 60 * 1000).toISOString();
+  return [
+    {
+      id: "bkg_seed_techco",
+      customer_id: "cus_seed_techco",
+      customer_name: "TechCo Events",
+      event_date: "Tomorrow",
+      event_address: "456 Market St, San Francisco",
+      guest_count: 50,
+      setup_time: "9:00 AM",
+      drink_notes: "Regular coffee, oat milk available",
+      day_of_contact: "Marcus, 415-555-0192",
+      deposit_amount_cents: 140000,
+      deposit_link: "https://wallet.paysponge.com/pay/pl_demo_techco",
+      deposit_paid: true,
+      stage: "confirmed",
+      message_id: "msg_seed_corporate",
+      created_at: earlier(180),
+      updated_at: earlier(60),
+    },
+    {
+      id: "bkg_seed_jessica",
+      customer_id: "cus_seed_jessica",
+      customer_name: "Jessica Park",
+      event_date: "June 12",
+      guest_count: 80,
+      drink_notes: "Standard espresso drinks",
+      deposit_amount_cents: 80000,
+      deposit_link: "https://wallet.paysponge.com/pay/pl_seed_jessica",
+      deposit_paid: false,
+      stage: "deposit_sent",
+      message_id: "msg_seed_graduation",
+      created_at: earlier(110),
+      updated_at: earlier(100),
+    },
+  ];
 }
