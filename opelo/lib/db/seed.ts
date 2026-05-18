@@ -30,6 +30,14 @@ export function defaultPolicies(): Policies {
     booking_availability:
       "Available Mon–Sat. Events require 48hr notice and a deposit to confirm the date.",
     auto_book_lead_above: 1200,
+    event_detail_fields: [
+      "event date",
+      "event address",
+      "setup time",
+      "guest count",
+      "drink preferences",
+      "day-of contact",
+    ],
   };
 }
 

@@ -1,5 +1,6 @@
 import {
   ActionType,
+  Booking,
   Channel,
   Classification,
   Customer,
@@ -73,6 +74,16 @@ export async function processInboundMessage(
   const isVip =
     customer.vip || policies.vip_customers.includes(customer.email);
 
+  // Pull any active booking for this customer BEFORE deciding. If one exists
+  // and is mid-flow ("deposit_sent" / "details_needed"), this message is a
+  // follow-up — Opelo should acknowledge details on the existing booking,
+  // not start a new deposit flow.
+  const existingBooking = await store.getBookingByCustomer(customer.id);
+  const isActiveFollowUp =
+    !!existingBooking &&
+    (existingBooking.stage === "deposit_sent" ||
+      existingBooking.stage === "details_needed");
+
   const plan = decide({
     classification,
     detected_amount: hints.detected_amount,
@@ -80,6 +91,8 @@ export async function processInboundMessage(
     is_vip: isVip,
     customer,
     policies,
+    existing_booking: existingBooking ?? null,
+    is_active_follow_up: isActiveFollowUp,
   });
 
   // Default texts come from deterministic engine. LLM optionally rewrites tone.
@@ -116,7 +129,7 @@ export async function processInboundMessage(
   }
 
   let responseBody = customer_response;
-  if (plan.action_type === "deposit_requested") {
+  if (plan.action_type === "deposit_requested" && !isActiveFollowUp) {
     const depositDollars =
       plan.counter_offer ?? hints.detected_amount ?? 800;
     const flow = await createDepositBookingFlow({
@@ -125,6 +138,25 @@ export async function processInboundMessage(
       depositDollars,
     });
     responseBody += flow.appendix;
+  }
+  // Follow-up reply on an existing booking: persist the new details onto the
+  // booking so the dashboard shows the chain (no new booking row).
+  if (plan.action_type === "event_confirmed" && existingBooking) {
+    const { extractEventDetails } = await import("../booking/extract");
+    const parsed = extractEventDetails(
+      `${message.subject}\n${message.body}`,
+    );
+    await store.updateBooking(existingBooking.id, {
+      event_date: parsed.date ?? existingBooking.event_date,
+      event_address: parsed.address ?? existingBooking.event_address,
+      guest_count: parsed.guestCount ?? existingBooking.guest_count,
+      drink_notes: parsed.drinkNotes ?? existingBooking.drink_notes,
+      stage:
+        existingBooking.stage === "details_needed"
+          ? "deposit_sent"
+          : existingBooking.stage,
+      updated_at: new Date().toISOString(),
+    });
   }
 
   const signed_response = signedCustomerResponse(responseBody, message.channel);
@@ -161,10 +193,21 @@ interface DecideArgs {
   is_vip: boolean;
   customer: Customer;
   policies: Policies;
+  existing_booking: Booking | null;
+  is_active_follow_up: boolean;
 }
 
 function decide(args: DecideArgs): DecisionPlan {
-  const { classification, detected_amount, is_escalation, is_vip, customer, policies } = args;
+  const {
+    classification,
+    detected_amount,
+    is_escalation,
+    is_vip,
+    customer,
+    policies,
+    existing_booking,
+    is_active_follow_up,
+  } = args;
 
   if (is_escalation && classification !== "refund_request") {
     return {
@@ -176,6 +219,34 @@ function decide(args: DecideArgs): DecisionPlan {
         "Detected escalation language — routed to owner before any auto-reply.",
       fallback_customer_response: `Hi ${firstName(customer.name)}, I'm sorry for the slow response — your note has been flagged for me personally and I'll get back to you today.\n\n— Sent by your Opelo AI manager`,
       fallback_owner_summary: `Escalated: "${customer.name}" — angry/complaint language detected. Hold off on auto-reply.`,
+      revenue_delta: 0,
+    };
+  }
+
+  // Follow-up on an active booking. Customer already has a deposit-sent /
+  // details-needed booking — this inbound is part of the SAME conversation.
+  // Route as event_confirmed regardless of how the classifier scored the
+  // body (the details-only reply often heuristics as qualified_lead or
+  // scheduling_request because it has no "event" keyword). Refund /
+  // sponsorship / explicit escalation still flow through their own paths.
+  if (
+    is_active_follow_up &&
+    existing_booking &&
+    classification !== "refund_request" &&
+    classification !== "sponsorship_offer" &&
+    classification !== "escalation"
+  ) {
+    const linkLine = existing_booking.deposit_link
+      ? `\n\nYour deposit link is still here if you haven't paid yet: ${existing_booking.deposit_link}`
+      : "";
+    return {
+      decision: "approve",
+      action_type: "event_confirmed",
+      policy_applied:
+        "Follow-up on existing booking — acknowledge details, do not duplicate the deposit ask",
+      fallback_customer_response: `Thanks, ${firstName(customer.name)} — got it all. I've added these details to your booking and we're locked in pending the deposit.${linkLine}`,
+      fallback_owner_summary: `${customer.name} replied with event details on existing booking ${existing_booking.id}. Stage stays "${existing_booking.stage}" until deposit clears.`,
+      fallback_reasoning_summary: `Follow-up reply on active booking ${existing_booking.id} — captured details, did not duplicate deposit flow.`,
       revenue_delta: 0,
     };
   }
@@ -295,13 +366,17 @@ function decide(args: DecideArgs): DecisionPlan {
     case "event_inquiry": {
       const amt = detected_amount ?? 0;
       const hasDetails = amt > 0;
+      const askedForFields =
+        policies.event_detail_fields && policies.event_detail_fields.length > 0
+          ? policies.event_detail_fields.join(", ")
+          : "event date and address, setup time, guest count, any drink customizations, and your budget";
       return {
         decision: hasDetails ? "approve" : "schedule",
         action_type: hasDetails ? "deposit_requested" : "auto_reply_sent",
         policy_applied: "Collect event details and send deposit link to hold the date",
         fallback_customer_response: hasDetails
-          ? `Thanks so much for reaching out — we'd love to bring the cart to your event! To hold your date, the next step is a deposit. Could you also confirm the event address, setup time, guest count, any drink customizations, and the best day-of contact? I'll get everything confirmed once the deposit is in.`
-          : `Thanks so much for reaching out — we'd love to be there! To get your date on the calendar, I just need a few details: approximate guest count, event date and address, setup time, any drink customizations, and your budget. Reply here and I'll follow up with next steps right away.`,
+          ? `Thanks so much for reaching out — we'd love to bring the cart to your event! To hold your date, the next step is a deposit. Could you also confirm ${askedForFields}? I'll get everything confirmed once the deposit is in.`
+          : `Thanks so much for reaching out — we'd love to be there! To get your date on the calendar, I just need a few details: ${askedForFields}. Reply here and I'll follow up with next steps right away.`,
         fallback_owner_summary: `New event inquiry from ${customer.name}${amt > 0 ? ` — $${amt.toFixed(0)} budget mentioned. Deposit link sent.` : ". Opelo asked for event details."}`,
         fallback_reasoning_summary: `Event booking inquiry — ${hasDetails ? "sent deposit link to hold the date" : "requested missing event details"}.`,
         revenue_delta: 0,

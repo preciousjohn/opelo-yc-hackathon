@@ -77,6 +77,12 @@ export interface Policies {
   escalation_keywords: string[];
   booking_availability: string;
   auto_book_lead_above: number;
+  /**
+   * Plain-language list of details Opelo asks customers to send when an
+   * event inquiry comes in (e.g. "guest count", "setup time", "drink
+   * preferences"). Editable from the Rules page.
+   */
+  event_detail_fields: string[];
 }
 
 export interface MockExternalAction {
