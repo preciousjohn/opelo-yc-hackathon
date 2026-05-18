@@ -6,7 +6,9 @@ import {
   eventTypeOf,
   normalizeInboundCall,
   normalizeInboundSMS,
+  sendOwnerUpdate,
 } from "./agentphone";
+import { isFromOwner, parseOwnerCommand } from "./owner_commands";
 
 export interface AgentPhoneIngestResult {
   ok: boolean;
@@ -51,6 +53,22 @@ async function ingestSMS(
   parsed: ParsedSMS,
   event_type: string,
 ): Promise<AgentPhoneIngestResult> {
+  // If this SMS came from the owner's personal phone AND looks like a known
+  // command (yes / no / later / snooze N), treat it as a command/reaction to
+  // a prior owner update. Free-form messages from the owner (e.g. they're
+  // demoing the system by texting in as a customer) fall through to the
+  // normal customer path so the inbox actually surfaces them.
+  if (isFromOwner(parsed.from)) {
+    const cmd = parseOwnerCommand(parsed.body);
+    if (cmd.type !== "unknown") {
+      return handleOwnerCommand(parsed, event_type);
+    }
+    // Unknown text from owner: log a hint, then fall through as customer.
+    console.log(
+      "[opelo.owner_command] owner texted a non-command body; treating as customer message for demo",
+    );
+  }
+
   const phoneSlug = slug(parsed.from) || `unknown_${Date.now()}`;
   const customerId = `cus_live_${phoneSlug}`;
 
@@ -102,6 +120,40 @@ async function ingestSMS(
     reason: inserted ? "inserted" : "duplicate",
     message: stored,
     customer,
+    event_type: parsed.event_type || event_type,
+  };
+}
+
+async function handleOwnerCommand(
+  parsed: ParsedSMS,
+  event_type: string,
+): Promise<AgentPhoneIngestResult> {
+  const command = parseOwnerCommand(parsed.body);
+  // Surfaced in server logs so the user can see what was parsed during a demo.
+  console.log("[opelo.owner_command]", {
+    type: command.type,
+    raw: parsed.body.slice(0, 120),
+  });
+
+  // Acknowledge unknown commands back to the owner so they know the system
+  // saw the text but didn't recognize the intent. Known commands stay silent
+  // here — the booking/decision handler will apply the effect and any owner
+  // confirmation goes through there.
+  if (command.type === "unknown") {
+    await sendOwnerUpdate(
+      `Opelo: got your message but didn't recognize that command. Try "yes", "no", "later", or "snooze 30".`,
+    );
+  }
+
+  // TODO: when the booking workflow is wired, look up the latest
+  // owner_escalated / deposit_requested action and apply the command's
+  // intent (approve/reject/snooze) to its booking stage.
+
+  return {
+    ok: true,
+    inserted: false,
+    parsed_kind: "sms",
+    reason: `owner_command:${command.type}`,
     event_type: parsed.event_type || event_type,
   };
 }

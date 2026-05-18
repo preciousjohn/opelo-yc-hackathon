@@ -491,7 +491,12 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
     plan.action_type === "sponsorship_countered" ||
     plan.action_type === "discount_offered";
   if (notifyOwner) {
-    actions.push(await agentphoneSendOwnerUpdate(`Opelo: ${owner_summary}`));
+    const ownerMsg = buildOwnerSMS(
+      plan.action_type,
+      owner_summary,
+      customer.name,
+    );
+    actions.push(await agentphoneSendOwnerUpdate(ownerMsg));
   }
 
   const memResp = await supermemorySaveDecision({
@@ -513,4 +518,28 @@ async function runExternalActions(args: RunArgs): Promise<MockExternalAction[]> 
 
 function firstName(full: string): string {
   return full.split(/\s+/)[0] || full;
+}
+
+/**
+ * Compose an actionable owner SMS. Every owner update doubles as a mini
+ * decision point — the owner can text back "yes", "no", "later", or
+ * "snooze 30" and the inbound webhook will route that through
+ * owner_commands.ts.
+ */
+function buildOwnerSMS(
+  actionType: ActionType,
+  summary: string,
+  customerName: string,
+): string {
+  const replyHints: Partial<Record<ActionType, string>> = {
+    owner_escalated: `Reply "yes" to approve action, "no" to decline, or "later" to snooze.`,
+    deposit_requested: `Reply "yes" to confirm deposit received, or "later" to follow up.`,
+    meeting_booked: `Reply "yes" to confirm, "no" to cancel.`,
+    refund_issued: `Reply "no" to reverse if needed.`,
+    event_confirmed: `Reply "yes" to acknowledge, or "later" to revisit.`,
+    sponsorship_countered: `Reply "yes" to send, "no" to hold.`,
+    discount_offered: `Reply "yes" to send, "no" to hold.`,
+  };
+  const hint = replyHints[actionType] ?? `Reply "yes", "no", or "later".`;
+  return `Opelo (${customerName}): ${summary}\n\n${hint}`;
 }
