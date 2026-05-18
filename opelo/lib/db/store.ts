@@ -1,5 +1,3 @@
-import { promises as fs } from "fs";
-import path from "path";
 import {
   ActionRecord,
   Booking,
@@ -12,91 +10,37 @@ import {
 } from "../types";
 import { nanoid } from "../integrations/util";
 import { demoBusiness } from "../business";
-import {
-  defaultPolicies,
-  seedActions,
-  seedBookings,
-  seedCustomers,
-  seedMessages,
-  seedPendingInbound,
-  seedWallet,
-} from "./seed";
+import { createServiceClient } from "../supabase/service";
 
-const DATA_DIR = path.join(process.cwd(), ".opelo-data");
-const DATA_FILE = path.join(DATA_DIR, "store.json");
-
-interface Snapshot {
-  policies: Policies;
-  customers: Customer[];
-  messages: InboundMessage[];
-  actions: ActionRecord[];
-  owner_summaries: OwnerSummary[];
-  pending_inbound: InboundMessage[];
-  wallet: CompanyWallet;
-  webhook_events: WebhookEvent[];
-  bookings: Booking[];
+// Get a fresh Supabase client for each operation
+function getClient() {
+  return createServiceClient();
 }
 
-let cache: Snapshot | null = null;
-let writeLock: Promise<void> = Promise.resolve();
-
-function initial(): Snapshot {
+// Default policies for when the table is empty
+function defaultPolicies(): Policies {
   return {
-    policies: defaultPolicies(),
-    customers: seedCustomers(),
-    messages: seedMessages(),
-    actions: seedActions(),
-    owner_summaries: [],
-    pending_inbound: seedPendingInbound(),
-    wallet: seedWallet(),
-    webhook_events: [],
-    bookings: seedBookings(),
+    refund_auto_approve_under: 5000,
+    min_sponsorship_price: 50000,
+    min_project_price: 100000,
+    vip_customers: [],
+    escalation_keywords: [],
+    booking_availability: "Weekends preferred, 2 weeks notice",
+    auto_book_lead_above: 200000,
+    event_detail_fields: ["guest count", "setup time", "drink preferences"],
   };
 }
 
-async function ensureDir(): Promise<void> {
-  try {
-    await fs.mkdir(DATA_DIR, { recursive: true });
-  } catch {
-    // ignore
-  }
-}
-
-async function readSnapshot(): Promise<Snapshot> {
-  if (cache) return cache;
-  try {
-    const raw = await fs.readFile(DATA_FILE, "utf8");
-    cache = JSON.parse(raw) as Snapshot;
-    if (!cache.owner_summaries) cache.owner_summaries = [];
-    if (!cache.pending_inbound) cache.pending_inbound = seedPendingInbound();
-    if (!cache.wallet) cache.wallet = seedWallet();
-    if (!cache.webhook_events) cache.webhook_events = [];
-    if (!cache.bookings) cache.bookings = seedBookings();
-    return cache;
-  } catch {
-    cache = initial();
-    await persist();
-    return cache;
-  }
-}
-
-async function persist(): Promise<void> {
-  if (!cache) return;
-  await ensureDir();
-  const data = JSON.stringify(cache, null, 2);
-  await fs.writeFile(DATA_FILE, data, "utf8");
-}
-
-async function withLock<T>(fn: () => Promise<T>): Promise<T> {
-  const prev = writeLock;
-  let release: () => void = () => {};
-  writeLock = new Promise<void>((res) => (release = res));
-  await prev;
-  try {
-    return await fn();
-  } finally {
-    release();
-  }
+// Default wallet for when the table is empty
+function defaultWallet(): CompanyWallet {
+  return {
+    available_cents: 1250000,
+    pending_cents: 0,
+    refunded_today_cents: 0,
+    revenue_generated_today_cents: 0,
+    currency: "USD",
+    updated_at: new Date().toISOString(),
+  };
 }
 
 export const store = {
@@ -108,253 +52,504 @@ export const store = {
   async getBusinessName(): Promise<string> {
     return demoBusiness.name;
   },
+
   async getBusinessDescription(): Promise<string> {
     return (
       process.env.BUSINESS_DESCRIPTION?.trim() ||
       `${demoBusiness.name} — operated by ${demoBusiness.ownerName}.`
     );
   },
+
   async getPolicies(): Promise<Policies> {
-    const snap = await readSnapshot();
-    return snap.policies;
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("policies")
+      .select("*")
+      .limit(1)
+      .single();
+
+    if (error || !data) {
+      console.warn("[store] Failed to get policies, using defaults:", error?.message);
+      return defaultPolicies();
+    }
+
+    return {
+      refund_auto_approve_under: data.refund_auto_approve_under,
+      min_sponsorship_price: data.min_sponsorship_price,
+      min_project_price: data.min_project_price,
+      vip_customers: data.vip_customers || [],
+      escalation_keywords: data.escalation_keywords || [],
+      booking_availability: data.booking_availability,
+      auto_book_lead_above: data.auto_book_lead_above,
+      event_detail_fields: data.event_detail_fields || [],
+    };
   },
+
   async setPolicies(next: Policies): Promise<Policies> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      snap.policies = next;
-      await persist();
-      return snap.policies;
-    });
+    const supabase = getClient();
+    
+    // Get existing policy row
+    const { data: existing } = await supabase
+      .from("policies")
+      .select("id")
+      .limit(1)
+      .single();
+
+    if (existing) {
+      await supabase
+        .from("policies")
+        .update({
+          ...next,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existing.id);
+    } else {
+      await supabase.from("policies").insert(next);
+    }
+
+    return next;
   },
+
   async listCustomers(): Promise<Customer[]> {
-    const snap = await readSnapshot();
-    return snap.customers;
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("customers")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[store] Failed to list customers:", error.message);
+      return [];
+    }
+
+    return data || [];
   },
+
   async getCustomer(id: string): Promise<Customer | undefined> {
-    const snap = await readSnapshot();
-    return snap.customers.find((c) => c.id === id);
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("customers")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error || !data) return undefined;
+    return data;
   },
+
   async upsertCustomer(c: Customer): Promise<Customer> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      const idx = snap.customers.findIndex((x) => x.id === c.id);
-      if (idx >= 0) snap.customers[idx] = c;
-      else snap.customers.push(c);
-      await persist();
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("customers")
+      .upsert(c, { onConflict: "id" })
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[store] Failed to upsert customer:", error.message);
       return c;
-    });
+    }
+
+    return data || c;
   },
+
   async listMessages(): Promise<InboundMessage[]> {
-    const snap = await readSnapshot();
-    return [...snap.messages].sort((a, b) =>
-      b.received_at.localeCompare(a.received_at),
-    );
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("messages")
+      .select("*")
+      .order("received_at", { ascending: false });
+
+    if (error) {
+      console.error("[store] Failed to list messages:", error.message);
+      return [];
+    }
+
+    return data || [];
   },
+
   async getMessage(id: string): Promise<InboundMessage | undefined> {
-    const snap = await readSnapshot();
-    return snap.messages.find((m) => m.id === id);
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error || !data) return undefined;
+    return data;
   },
+
   async addMessage(
-    message: InboundMessage,
+    message: InboundMessage
   ): Promise<{ inserted: boolean; message: InboundMessage }> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      const dupById = snap.messages.find((m) => m.id === message.id);
-      if (dupById) return { inserted: false, message: dupById };
-      if (message.source_id) {
-        const dupBySource = snap.messages.find(
-          (m) => m.source_id === message.source_id,
-        );
-        if (dupBySource) return { inserted: false, message: dupBySource };
-      }
-      snap.messages.push(message);
-      await persist();
-      return { inserted: true, message };
-    });
+    const supabase = getClient();
+
+    // Check for duplicate by id
+    const { data: dupById } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("id", message.id)
+      .single();
+
+    if (dupById) return { inserted: false, message: dupById };
+
+    // Check for duplicate by source_id
+    if (message.source_id) {
+      const { data: dupBySource } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("source_id", message.source_id)
+        .single();
+
+      if (dupBySource) return { inserted: false, message: dupBySource };
+    }
+
+    const { data, error } = await supabase
+      .from("messages")
+      .insert(message)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[store] Failed to add message:", error.message);
+      return { inserted: false, message };
+    }
+
+    return { inserted: true, message: data || message };
   },
+
   async updateMessageStatus(
     id: string,
-    status: InboundMessage["status"],
+    status: InboundMessage["status"]
   ): Promise<void> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      const m = snap.messages.find((x) => x.id === id);
-      if (m) m.status = status;
-      await persist();
-    });
+    const supabase = getClient();
+    await supabase.from("messages").update({ status }).eq("id", id);
   },
+
   async addAction(action: ActionRecord): Promise<ActionRecord> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      snap.actions.unshift(action);
-      await persist();
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("actions")
+      .insert(action)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[store] Failed to add action:", error.message);
       return action;
-    });
+    }
+
+    return data || action;
   },
+
   async listActions(): Promise<ActionRecord[]> {
-    const snap = await readSnapshot();
-    return [...snap.actions].sort((a, b) =>
-      b.created_at.localeCompare(a.created_at),
-    );
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("actions")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[store] Failed to list actions:", error.message);
+      return [];
+    }
+
+    return data || [];
   },
+
   async addOwnerSummary(s: OwnerSummary): Promise<OwnerSummary> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      snap.owner_summaries.unshift(s);
-      await persist();
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("owner_summaries")
+      .insert(s)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[store] Failed to add owner summary:", error.message);
       return s;
-    });
+    }
+
+    return data || s;
   },
+
   async listOwnerSummaries(): Promise<OwnerSummary[]> {
-    const snap = await readSnapshot();
-    return snap.owner_summaries;
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("owner_summaries")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[store] Failed to list owner summaries:", error.message);
+      return [];
+    }
+
+    return data || [];
   },
+
   async getWallet(): Promise<CompanyWallet> {
-    const snap = await readSnapshot();
-    return snap.wallet;
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("wallet")
+      .select("*")
+      .limit(1)
+      .single();
+
+    if (error || !data) {
+      console.warn("[store] Failed to get wallet, using defaults:", error?.message);
+      return defaultWallet();
+    }
+
+    return {
+      available_cents: data.available_cents,
+      pending_cents: data.pending_cents,
+      refunded_today_cents: data.refunded_today_cents,
+      revenue_generated_today_cents: data.revenue_generated_today_cents,
+      currency: data.currency,
+      updated_at: data.updated_at,
+    };
   },
+
   async applyRefund(amountCents: number): Promise<CompanyWallet> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      const cents = Math.max(0, Math.round(amountCents));
-      snap.wallet.available_cents = Math.max(
-        0,
-        snap.wallet.available_cents - cents,
-      );
-      snap.wallet.refunded_today_cents += cents;
-      snap.wallet.updated_at = new Date().toISOString();
-      await persist();
-      return snap.wallet;
-    });
+    const supabase = getClient();
+    const wallet = await this.getWallet();
+    const cents = Math.max(0, Math.round(amountCents));
+
+    const updated = {
+      available_cents: Math.max(0, wallet.available_cents - cents),
+      refunded_today_cents: wallet.refunded_today_cents + cents,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: existing } = await supabase
+      .from("wallet")
+      .select("id")
+      .limit(1)
+      .single();
+
+    if (existing) {
+      await supabase.from("wallet").update(updated).eq("id", existing.id);
+    }
+
+    return { ...wallet, ...updated };
   },
+
   async applyPaymentLinkCreated(amountCents: number): Promise<CompanyWallet> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      const cents = Math.max(0, Math.round(amountCents));
-      // Pending = pipeline created via a payment link. Available is unchanged
-      // because the customer hasn't paid yet.
-      snap.wallet.pending_cents += cents;
-      snap.wallet.updated_at = new Date().toISOString();
-      await persist();
-      return snap.wallet;
-    });
+    const supabase = getClient();
+    const wallet = await this.getWallet();
+    const cents = Math.max(0, Math.round(amountCents));
+
+    const updated = {
+      pending_cents: wallet.pending_cents + cents,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: existing } = await supabase
+      .from("wallet")
+      .select("id")
+      .limit(1)
+      .single();
+
+    if (existing) {
+      await supabase.from("wallet").update(updated).eq("id", existing.id);
+    }
+
+    return { ...wallet, ...updated };
   },
+
   async applyRevenueGenerated(amountCents: number): Promise<CompanyWallet> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      const cents = Math.max(0, Math.round(amountCents));
-      snap.wallet.revenue_generated_today_cents += cents;
-      snap.wallet.updated_at = new Date().toISOString();
-      await persist();
-      return snap.wallet;
-    });
+    const supabase = getClient();
+    const wallet = await this.getWallet();
+    const cents = Math.max(0, Math.round(amountCents));
+
+    const updated = {
+      revenue_generated_today_cents: wallet.revenue_generated_today_cents + cents,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: existing } = await supabase
+      .from("wallet")
+      .select("id")
+      .limit(1)
+      .single();
+
+    if (existing) {
+      await supabase.from("wallet").update(updated).eq("id", existing.id);
+    }
+
+    return { ...wallet, ...updated };
   },
+
   async addWebhookEvent(
     event: Omit<WebhookEvent, "id" | "created_at"> & {
       id?: string;
       created_at?: string;
-    },
+    }
   ): Promise<WebhookEvent> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      const full: WebhookEvent = {
-        id: event.id ?? nanoid("wh"),
-        created_at: event.created_at ?? new Date().toISOString(),
-        provider: event.provider,
-        event_type: event.event_type,
-        payload: event.payload,
-        parsed_kind: event.parsed_kind,
-        inserted_message_id: event.inserted_message_id,
-      };
-      snap.webhook_events.unshift(full);
-      // Cap to last 200 to keep the store readable.
-      if (snap.webhook_events.length > 200) {
-        snap.webhook_events.length = 200;
-      }
-      await persist();
+    const supabase = getClient();
+    const full: WebhookEvent = {
+      id: event.id ?? nanoid("wh"),
+      created_at: event.created_at ?? new Date().toISOString(),
+      provider: event.provider,
+      event_type: event.event_type,
+      payload: event.payload,
+      parsed_kind: event.parsed_kind,
+      inserted_message_id: event.inserted_message_id,
+    };
+
+    const { data, error } = await supabase
+      .from("webhook_events")
+      .insert(full)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[store] Failed to add webhook event:", error.message);
       return full;
-    });
+    }
+
+    return data || full;
   },
+
   async updateWebhookEvent(
     id: string,
-    patch: Partial<Pick<WebhookEvent, "parsed_kind" | "inserted_message_id">>,
+    patch: Partial<Pick<WebhookEvent, "parsed_kind" | "inserted_message_id">>
   ): Promise<WebhookEvent | null> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      const e = snap.webhook_events.find((w) => w.id === id);
-      if (!e) return null;
-      if (patch.parsed_kind !== undefined) e.parsed_kind = patch.parsed_kind;
-      if (patch.inserted_message_id !== undefined)
-        e.inserted_message_id = patch.inserted_message_id;
-      await persist();
-      return e;
-    });
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("webhook_events")
+      .update(patch)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[store] Failed to update webhook event:", error.message);
+      return null;
+    }
+
+    return data;
   },
+
   async listWebhookEvents(provider?: string): Promise<WebhookEvent[]> {
-    const snap = await readSnapshot();
-    const events = provider
-      ? snap.webhook_events.filter((e) => e.provider === provider)
-      : snap.webhook_events;
-    return [...events];
+    const supabase = getClient();
+    let query = supabase
+      .from("webhook_events")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (provider) {
+      query = query.eq("provider", provider);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("[store] Failed to list webhook events:", error.message);
+      return [];
+    }
+
+    return data || [];
   },
+
+  // Note: pending_inbound is not used in production - messages come via webhooks
   async dequeueNextPending(): Promise<InboundMessage | null> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      const next = snap.pending_inbound.shift();
-      if (!next) return null;
-      next.received_at = new Date().toISOString();
-      next.status = "new";
-      snap.messages.push(next);
-      await persist();
-      return next;
-    });
+    return null;
   },
+
   async pendingInboundCount(): Promise<number> {
-    const snap = await readSnapshot();
-    return snap.pending_inbound.length;
+    return 0;
   },
+
   async reset(): Promise<void> {
-    return withLock(async () => {
-      cache = initial();
-      await persist();
-    });
+    const supabase = getClient();
+    // Clear all tables (be careful with this in production!)
+    await supabase.from("bookings").delete().neq("id", "");
+    await supabase.from("actions").delete().neq("id", "");
+    await supabase.from("messages").delete().neq("id", "");
+    await supabase.from("customers").delete().neq("id", "");
+    await supabase.from("webhook_events").delete().neq("id", "");
+    await supabase.from("owner_summaries").delete().neq("id", "");
+    console.log("[store] Reset complete");
   },
+
   async listBookings(): Promise<Booking[]> {
-    const snap = await readSnapshot();
-    return [...snap.bookings].sort((a, b) => {
-      const da = a.event_date ?? "";
-      const db = b.event_date ?? "";
-      if (da && db && da !== db) return da.localeCompare(db);
-      return b.updated_at.localeCompare(a.updated_at);
-    });
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("bookings")
+      .select("*")
+      .order("event_date", { ascending: true });
+
+    if (error) {
+      console.error("[store] Failed to list bookings:", error.message);
+      return [];
+    }
+
+    return data || [];
   },
+
   async getBooking(id: string): Promise<Booking | undefined> {
-    const snap = await readSnapshot();
-    return snap.bookings.find((b) => b.id === id);
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error || !data) return undefined;
+    return data;
   },
+
   async getBookingByCustomer(customerId: string): Promise<Booking | undefined> {
-    const snap = await readSnapshot();
-    return snap.bookings.find((b) => b.customer_id === customerId);
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("bookings")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error || !data) return undefined;
+    return data;
   },
+
   async addBooking(booking: Booking): Promise<Booking> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      snap.bookings.unshift(booking);
-      await persist();
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("bookings")
+      .insert(booking)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[store] Failed to add booking:", error.message);
       return booking;
-    });
+    }
+
+    return data || booking;
   },
+
   async updateBooking(
     id: string,
-    patch: Partial<Booking>,
+    patch: Partial<Booking>
   ): Promise<Booking | null> {
-    return withLock(async () => {
-      const snap = await readSnapshot();
-      const b = snap.bookings.find((x) => x.id === id);
-      if (!b) return null;
-      Object.assign(b, patch, { updated_at: new Date().toISOString() });
-      await persist();
-      return b;
-    });
+    const supabase = getClient();
+    const { data, error } = await supabase
+      .from("bookings")
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("[store] Failed to update booking:", error.message);
+      return null;
+    }
+
+    return data;
   },
 };
